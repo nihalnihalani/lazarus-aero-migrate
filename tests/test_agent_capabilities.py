@@ -270,20 +270,19 @@ def test_grounding_on_does_not_drop_legacy_prompt_body(agent_mod):
     assert f"```cobol\n{cobol}\n```" in prompt
 
 
-def test_grounding_env_flag_default_off(agent_mod):
-    """_grounding_enabled() is the env reader: default OFF; only 1/true/yes/on flip it on."""
-    import os
+def test_grounding_env_flag_default_off(agent_mod, monkeypatch):
+    """_grounding_enabled() is the env reader: default OFF; only 1/true/yes/on flip it on.
+    monkeypatch so a mid-loop failure can't leak LAZARUS_GROUND into other tests."""
     if not hasattr(agent_mod, "_grounding_enabled"):
         pytest.skip("agent._grounding_enabled not present")
     # autouse fixture cleared LAZARUS_GROUND -> default off
     assert agent_mod._grounding_enabled() is False
-    for on in ("1", "true", "TRUE", "yes", "on"):
-        os.environ["LAZARUS_GROUND"] = on
+    for on in ("1", "true", "TRUE", "yes", "on", " On "):
+        monkeypatch.setenv("LAZARUS_GROUND", on)
         assert agent_mod._grounding_enabled() is True, on
     for off in ("0", "false", "no", "off", "", "maybe"):
-        os.environ["LAZARUS_GROUND"] = off
+        monkeypatch.setenv("LAZARUS_GROUND", off)
         assert agent_mod._grounding_enabled() is False, off
-    os.environ.pop("LAZARUS_GROUND", None)
 
 
 def test_grounding_breadcrumbs_from_search_and_url_steps(agent_mod):
