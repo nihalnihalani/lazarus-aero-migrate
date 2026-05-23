@@ -35,7 +35,8 @@
 | L3 | Local-oracle pytest presented truthfully (orchestrator IS the harness) | load-bearing (honesty) | **CONFIRMED + WIRED** — server.py:308 uses `oracle_harness_pytest_event` (source="differential_oracle", `oracle_equivalence[...]` case names, honest summary). NOT framed as the agent's own pytest. Tested. |
 | L4 | Phase progression is REAL (agent milestones), not faked timing | medium | **FIXED IN CODE (pending live)** — `phase_for_text` drives a forward-only, dedup'd rail off the streamed step text; the iteration counter no longer jumps the rail to TEST. Tested by test_phase_rail_advances_progressively (monotonic). |
 | L5 | golden_io.json (local truth) vs agent's own cobc — conflated? | load-bearing (honesty) | **CONFIRMED honest** — golden is the PRIMARY ground truth; agent live-refresh is opportunistic; prompt + oracle code keep them distinct. No conflation. |
-| L6 | 2-minute story legible for a judge | demo (45%) | **PENDING LIVE** — wiring removes the empty-panel risk; final legibility + weakest moment need qa's real stream. |
+| L6 | 2-minute story legible for a judge | demo (45%) | **NEEDS FIX (demo strategy) — see L10.** The LIVE run takes 8–12+ min (qa: 3 runs) with several min of blank/working screen before any panel — it CANNOT be the demo vehicle in a 2-min slot. The honest fix is to lead with the `?mock=1` cached replay (22s, honestly labeled), not a live run. |
+| L10 | LIVE latency (8–12+ min) breaks the "2-minute LIVE demo" framing | demo (45%, decisive) | **NEEDS FIX (demo strategy, not code).** Lead the timed demo with the honestly-labeled cached replay; use/show the live run as proof-of-real, not as the in-slot vehicle. Mock provenance is honest. |
 | L7 | Missing `diff` made the COBOL→Python card VANISH (reveal-gated) | demo (45%) | **FIXED IN CODE** — `diff_event(cobol, migrated)` emitted from real sources → translate card reveals. Tested (diff right-side == the agent's real module). |
 | L8 | Live download/diff/oracle depended on an UNPINNED payroll.py path | load-bearing (honesty) | **FIXED IN CODE (pending live)** — agent.py:136 now pins "write the final module to /workspace/payroll.py", matching the extractor. qa to confirm the agent honors it live. |
 
@@ -217,6 +218,35 @@ now provably true: the agent cannot fake equivalence past the oracle. STRONG.
   wall-clock on the real key. Belt-and-suspenders option if ever flaky: an explicit
   `LAZARUS_MODULE:` marker so recovery doesn't depend on incidental echo; and/or install gnucobol
   outside /workspace to shrink the tarball.
+
+---
+
+## L10 — LIVE latency (8–12+ min) breaks the "2-minute LIVE demo" framing  — NEEDS FIX (demo strategy)
+
+- **Claim (v2 plan, throughout):** a "2-minute LIVE demo" on the real key; "Live default;
+  `?mock=1` break-glass only" (web/index.html `mode-live`, app.js, mock note).
+- **EVIDENCE (qa-verifier, 3 live runs on the real key):** the live end-to-end is NOT a 2-minute
+  experience. Measured: run #1 events burst ~444s / done ~501s (~8.3 min); run #3 still on
+  iteration 1 at 12+ min. Time-to-first-panel is SEVERAL MINUTES of an empty/working screen (the
+  agent runs one long silent interaction, then the panels burst at the end). The scripted
+  `mock-run.json` timeline is 22.2s total — it fits a 2-min slot; a live run does not.
+- **Verdict: NEEDS FIX — but it's DEMO STRATEGY, not code, and the honest fix already exists.**
+  For a timed 2-min slot the realistic vehicle is the `?mock=1` cached replay. This is HONEST
+  *iff* it's narrated as what it is — the mock self-documents ("Break-glass fallback... mirrors a
+  real LAZARUS migration"), is derived from REAL GnuCOBOL golden bytes (golden_io.json), and the
+  UI labels it "BREAK-GLASS · cached run" / clock "cached". So:
+  - DO: lead the timed demo with the cached replay, narrated as "a replay of a real run," and show
+    the live system as PROOF it's real (e.g. a pre-warmed live run finishing in the background, or
+    the live download/verdict shown as evidence). qa already confirmed a real live run ends
+    EQUIVALENT with the agent's real module — that's the proof.
+  - DON'T: present the cached replay AS a live run, or promise "watch it run live in 2 minutes" —
+    the latency makes that false and a judge timing it would catch the empty screen.
+  - INVERT the framing in the demo narrative: "live by default" is the right PRODUCT default but
+    the WRONG demo-slot default. The README/DEMO_SCRIPT should say the 2-min demo uses the cached
+    replay of a real run, with the live path runnable on request (it just takes ~8–12 min).
+- **Owners:** team-lead / doc-keeper (demo narrative + DEMO_SCRIPT framing). Not a code change;
+  the mock + live both already work and are honestly labeled. This is the single most important
+  demo-readiness item: get the story + the vehicle right for the 2-min slot.
 
 ---
 
