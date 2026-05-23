@@ -22,7 +22,7 @@ LAZARUS is a **single Managed Agent** running in one Google-hosted Linux sandbox
 ┌───────────────┴───────────────────────────────────────────────────────┐
 │  MANAGED AGENT  (base: antigravity-preview-05-2026 · Gemini 3.5 Flash) │
 │  Persistent Ubuntu sandbox (Python 3.12, Node 22; real GnuCOBOL via    │
-│  micromamba/conda-forge userland — no root, pre-warmed into reused env)│
+│  micromamba/conda-forge userland — no root, installed into reused env) │
 │   Tools used:  code_execution · filesystem (persistent)               │
 │   Skills:      .agents/AGENTS.md + .agents/skills/*/SKILL.md           │
 │                                                                        │

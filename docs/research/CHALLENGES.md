@@ -29,6 +29,7 @@ investor are in the room and will fact-check every number and every platform cla
 | C13 | Demo blames "COMP-3" but COMP-3 isn't what fails | medium (signature beat honesty) | **NEEDS FIX (PROVEN) — NOT YET LANDED** — relabel still missing from mock-run.json (drives UI), STREAM_CONTRACT, DEMO, README, ARCHITECTURE, AGENTS.md, test_agent.py. Highest-priority remaining honesty fix. |
 | C14 | BUILD_PLAN "install GnuCOBOL" + "no network" contradiction | medium (build day) | **NEEDS FIX** — impossible task + self-contradiction; resolve with C4 |
 | C15 | `google-genai>=1.55.0` minimum version | low (it installs) | **RESOLVED (catch was right)** — true floor is `>=2.0.0` (1.55.0 was the model-interactions path). Repo already bumped to `>=2.6.0,<3.0.0`. |
+| C16 | Demo UI says "hot-reloading agent" mid-interaction | medium ($5k beat honesty) | **NEEDS FIX — NOT LANDED** in web/ (mock-run.json L80/83, STREAM_CONTRACT L107/119/121). Mid-interaction hot-reload is UNVERIFIED; docs already say "re-discovery on next pass" — UI must match. Fix in the same C13 web/ pass. |
 
 ---
 
@@ -393,6 +394,28 @@ investor are in the room and will fact-check every number and every platform cla
   model-interactions path). researcher docs confirm the managed-agents path needs
   `google-genai >= 2.0.0` (cookbook). The repo is already bumped: `requirements.txt`
   `>=2.6.0,<3.0.0`, `agent.py` `>=2.6.0`, README/ARCHITECTURE `>=2.0.0`. No further action.
+
+### C16. Demo UI claims "hot-reloading agent" mid-interaction  — NEEDS FIX (NOT LANDED in web/)
+- **Claim:** the web/ demo surface says the agent **hot-reloads** the skill it just authored,
+  live, mid-run. `web/STREAM_CONTRACT.md` L107 "the agent writes itself a new skill and
+  **hot-reloads**", L119 "`reload` — agent **hot-reloads** with the new skill", L121 label
+  "**Hot-reloading** agent…"; `web/mock/mock-run.json` L80 "**Hot-reloading** agent…", L83
+  "**Reloaded.** The … skill is now active."
+- **Attack:** mid-interaction hot-reload of an agent-authored SKILL.md is **UNVERIFIED** —
+  researcher-agents found ZERO doc language for "re-scanned mid-interaction"; auto-discovery is
+  a **STARTUP/scan** event. Files persist on disk (verbatim: "Packages installed during an
+  interaction persist when you reuse the same environment_id"), so the honest claim is
+  persist-to-disk + **re-discovery on the next pass** (reuse `environment_id`), NOT a live
+  in-flight reload. A DeepMind judge who knows the API will ask "does it really hot-reload
+  mid-thought?" — and the honest answer is no.
+- **Evidence:** docs/research/findings-agents.md (researcher-agents, verbatim quotes);
+  custom-agents.md.txt describes startup auto-load. Our OWN docs already say this correctly:
+  README L28 / ARCHITECTURE L53 / BUILD_PLAN L22 / AGENTS.md L47 all state "no mid-run
+  hot-reload; re-discovery on the next pass." Only the web/ surface contradicts them.
+- **Verdict: NEEDS FIX — NOT LANDED in web/.** Reword the UI: "reload" step → "**re-discovers
+  the skill on the next pass (same environment)**", drop "Hot-reloading"/"hot-reloads". Same
+  files as C13 (mock-run.json + STREAM_CONTRACT) — fold into the one web/ rewrite pass.
+  (Docs lane already compliant; this is purely the demo surface.)
 
 ---
 
