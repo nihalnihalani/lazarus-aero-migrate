@@ -349,14 +349,15 @@ def test_grounding_breadcrumbs_use_real_sdk_types(agent_mod):
     it = _SDK_ITX_TYPES
 
     # Resolve the real SDK class name regardless of the suffix the SDK ships (this test got
-    # flip-flopped between *Step and *Content). EMPIRICALLY VERIFIED on the installed SDK
-    # (google-genai 1.73.1): the classes are GoogleSearchCallContent / URLContextCallContent /
-    # URLContextResultContent — the `*Step` names are ABSENT (a `*Step` lookup raises
-    # AttributeError -> "Did you mean: 'GoogleSearchCallContent'?"). We still try both suffixes
-    # so a future SDK rename can't re-break the guard; the POINT of the test is the FIELD shapes
-    # (plural arguments.queries/urls, result[].url+status) that _tool_breadcrumb reads — that's
-    # what caught DA L17. (Candidate order is just fallback resilience, not a claim about which
-    # ships today.)
+    # flip-flopped between *Step and *Content). EMPIRICALLY VERIFIED on the PINNED SDK
+    # (google-genai 2.6.0 — what .venv/run.sh/server.py use, requirements pins >=2.6.0,<3):
+    # the classes are GoogleSearchCallStep / URLContextCallStep / URLContextResultStep; the
+    # `*Content` names were the OLDER 1.73.1 layout (a stray system-python install) and are
+    # ABSENT in 2.6.0. So on the shipped SDK *Step is correct — do NOT drop the *Step
+    # candidate. We still try BOTH suffixes so a future SDK rename can't re-break the guard;
+    # the POINT of the test is the FIELD shapes (plural arguments.queries/urls,
+    # result[].url+status) that _tool_breadcrumb reads — that's what caught DA L17.
+    # (Always check g.__version__ is 2.6.x before trusting any SDK-shape finding.)
     def _sdk(*candidates):
         for name in candidates:
             cls = getattr(it, name, None)
