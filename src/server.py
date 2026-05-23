@@ -64,6 +64,23 @@ app = FastAPI(title="LAZARUS — Aero-Migrate", version="1.0")
 _RUNS: dict[str, dict] = {}
 _SENTINEL = object()  # marks end-of-stream in the queue
 
+# Operator-facing labels for the phase rail / WORKING banner (frontend reads phase.label).
+# Used as the default when a phase is emitted without an explicit label (e.g. milestone-
+# derived phases). Keep these human and present-tense — they're what the operator reads
+# during the multi-minute live wait.
+_PHASE_LABELS = {
+    "ingest": "Provisioning sandbox + reading the COBOL",
+    "recover": "Recovering the business rules",
+    "translate": "Translating COBOL → Python",
+    "oracle": "Running the differential oracle",
+    "test": "Proving byte-for-byte equivalence",
+    "diagnose": "Diagnosing the divergent idiom",
+    "forge": "Forging a new skill for the idiom",
+    "reload": "Re-reading the forged skill",
+    "verify": "Verifying the re-translation",
+    "done": "Migration complete",
+}
+
 
 def _key_present() -> bool:
     return bool(os.environ.get("GEMINI_API_KEY"))
@@ -240,8 +257,11 @@ def _run_migration(run_id: str, cobol: str, filename: str) -> None:
         if idx < progress["idx"]:
             return  # never move the rail backwards
         progress["idx"] = idx
+        # Always carry a human label — the UI's WORKING banner shows it during the
+        # multi-minute live wait (reads phase.label, falls back to phase.phase).
         push({"type": "phase", "phase": phase,
-              "label": label or f"{phase.capitalize()}…", **extra})
+              "label": label or _PHASE_LABELS.get(phase, f"{phase.capitalize()}…"),
+              **extra})
 
     def emit_step(text: str) -> None:
         push({"type": "step", "kind": "output", "text": text})
