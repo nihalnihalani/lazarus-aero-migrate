@@ -16,22 +16,31 @@ LAZARUS ingests legacy **COBOL**, translates it to modern **tested Python**, and
 
 ## How it works
 
-```
-  payroll.cob ─┐
-               │   ┌─────────────────────────────────────────────────┐
-  (drop file)  └──▶│   Gemini 3.5 Flash · ONE Managed-Agent sandbox    │
-                   │                                                   │
-                   │   1  READ      whole module (1M-token context)    │
-                   │   2  RECOVER   undocumented business rules        │
-                   │   3  TRANSLATE COBOL → idiomatic Python           │
-                   │   4  PROVE     diff vs real GnuCOBOL bytes ───────┼─▶ RED?
-                   │   5  FORGE     author SKILL.md for the missing    │   │
-                   │                idiom, re-read it next pass  ◀──────┼───┘
-                   │   6  VERIFY    re-run → byte-for-byte  GREEN       │
-                   └───────────────────────────┬───────────────────────┘
-                                               ▼
-                       tested payroll.py   +   EQUIVALENT verdict
-                       (verdict tracks the oracle, not the agent)
+```mermaid
+flowchart TD
+    subgraph SB["Gemini 3.5 Flash — one Managed-Agent sandbox"]
+        direction TB
+        READ["1 · READ<br/>whole module · 1M-token context"]
+        RECOVER["2 · RECOVER<br/>undocumented business rules"]
+        TRANSLATE["3 · TRANSLATE<br/>COBOL to idiomatic Python"]
+        PROVE{"4 · PROVE<br/>diff vs real GnuCOBOL output"}
+        FORGE["5 · FORGE<br/>author SKILL.md for the missing idiom"]
+        VERIFY["6 · VERIFY<br/>byte-for-byte equivalent"]
+        READ --> RECOVER --> TRANSLATE --> PROVE
+        PROVE -- RED --> FORGE
+        FORGE -- "re-read skill · same environment_id" --> TRANSLATE
+        PROVE -- GREEN --> VERIFY
+    end
+
+    A["COBOL module<br/>payroll.cob · interest.cob"] --> READ
+    ORACLE[("golden_io.json<br/>real GnuCOBOL 3.2.0 output")]
+    ORACLE -. "ground truth · the falsifiable floor" .-> PROVE
+    VERIFY --> OUT["tested payroll.py + EQUIVALENT verdict<br/>verdict tracks the oracle, not the agent"]
+
+    classDef accent fill:#0c1311,stroke:#54f0a6,color:#d6e0d9;
+    classDef oracle fill:#101a16,stroke:#f2b657,color:#eafff5;
+    class READ,RECOVER,TRANSLATE,PROVE,FORGE,VERIFY accent;
+    class ORACLE oracle;
 ```
 
 A live run is **genuinely live and takes ~8–9 minutes** (real sandbox, real compiler, real proof) — the runtime is the proof it isn't a canned animation. A web UI streams the agent's work the whole time (phase rail, elapsed-timer heartbeat, scrolling trace) so the screen is never frozen.
