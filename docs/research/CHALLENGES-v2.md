@@ -663,3 +663,24 @@ shipped code (verified by my own replay + integration-eng's replay + qa's TestCl
 server.py). NO overclaim. NO code change needed (87a5572 already did exactly the fix I'd proposed).
 L14 is WITHDRAWN. Lesson recorded: a captured stream is only evidence for the code the capturing
 server was running — confirm the server's commit before drawing conclusions from a capture.
+
+---
+
+## L14 — FINAL DISPOSITION (both parts resolved on main; verified)
+
+team-lead split L14 correctly and it's fully resolved on origin/main:
+- WORDING (valid catch): "verified on real captured runs" WAS unsupported (no post-fix capture
+  exists). FIXED in 72dcbce (in main's history; I confirmed `git merge-base --is-ancestor 72dcbce
+  main` = YES). The DEMO_SCRIPT now says the rail completes in order "because the server emits these
+  phases in fixed sequence from the ordered structured events, NEVER from prose … deterministic +
+  unit-tested" and notes "earlier live captures predate this fix." Honest + accurate.
+- RAIL-SKIP (my error): retracted. I re-confirmed on origin/main server.py: `phase_for_text` count
+  = 0; the 8 emit_phase calls are hardcoded in fixed order ingest(333)→recover(353)→translate(379)
+  →oracle(386)→test(394)→forge(417)→reload(423)→done(430); emit_step (312–319) pushes ONLY a step,
+  no phase. Rail is clean by construction. My skip evidence (sse_full5) was probe5/6467773 output
+  on 8f1e7ea — PRE the 87a5572 rail fix. Stale capture, my mistake (see
+  [[captures-need-commit-provenance]]).
+NET: no overclaim remains; the DEMO_SCRIPT rail line is honest; shipped code produces the in-order
+rail (my replay + integration's replay + qa's TestClient all agree). Optional: a fresh
+rehearsal capture from a confirmed-current server would document it, but the order is deterministic.
+L14 CLOSED. ALL findings (L1–L14) now resolved/fixed/retracted — devil's-advocate review complete.
