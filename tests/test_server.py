@@ -282,6 +282,50 @@ def test_safety_net_goes_red_when_module_diverges(monkeypatch):
     assert by_type["done"]["verdict"] == "INCOMPLETE"   # verdict follows the REAL oracle
 
 
+def test_crashing_module_goes_red_not_falsely_green(monkeypatch):
+    """A fetched payroll.py that CRASHES under the oracle must show an explicit RED with a
+    diagnostic note — never fall through to a prose-only green just because the agent claimed
+    success. Otherwise a broken module + an over-claiming agent slips through."""
+    broken_py = "import sys\nraise SystemExit('boom')\n"   # exits non-zero on every input
+    monkeypatch.setattr(server, "_fetch_env_tarball",
+                        lambda env_id: _tar_with_module(broken_py))
+    _stub_markerless_agent(monkeypatch, output="All tests pass! Equivalent to COBOL.")
+
+    client = TestClient(server.app)
+    run_id = client.post("/api/migrate", json={"cobol": "X", "filename": "p.cob"}).json()["run_id"]
+    by_type = {e["type"]: e for e in _collect_events(client, run_id)}
+
+    pt = by_type["pytest"]
+    assert pt["result"] == "red"                       # NOT a false green
+    assert pt["source"] == "differential_oracle"
+    assert "could not run" in pt["summary"]
+    assert by_type["done"]["verdict"] == "INCOMPLETE"   # verdict follows the failed oracle
+
+
+def test_agent_marker_pytest_is_labeled_agent_source(monkeypatch):
+    """When the per-case pytest comes from the agent's OWN LAZARUS_ORACLE_JSON marker, it's
+    labeled source='agent_pytest' (distinct from the orchestrator's differential_oracle), so
+    the UI can show provenance honestly."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-real")
+    monkeypatch.setattr(agent_mod.genai, "Client", lambda *a, **k: object())
+    monkeypatch.setattr(agent_mod, "ensure_agent", lambda client: None)
+    monkeypatch.setattr(agent_mod, "migrate", lambda client, path: SimpleNamespace())
+    monkeypatch.setattr(
+        agent_mod, "extract_output_text",
+        lambda r: ('LAZARUS_ORACLE_JSON: [{"input": "1000.00\\n", "cobol": "0000775.00\\n", '
+                   '"python": "0000775.00\\n", "match": true}]\n1 passed'),
+    )
+    monkeypatch.setattr(agent_mod, "extract_environment_id", lambda r: "env-xyz")
+
+    client = TestClient(server.app)
+    run_id = client.post("/api/migrate", json={"cobol": "X", "filename": "p.cob"}).json()["run_id"]
+    by_type = {e["type"]: e for e in _collect_events(client, run_id)}
+
+    pt = by_type["pytest"]
+    assert pt["source"] == "agent_pytest"              # the agent's own oracle, not ours
+    assert pt["cases"][0]["name"].startswith("test_equivalence[")  # agent's case naming
+
+
 def test_phase_rail_advances_progressively(monkeypatch):
     """Phases advance off the streamed step text (ingest->recover->translate->oracle->test)
     and never move backwards — the rail shows the journey live, not just the verdict."""
