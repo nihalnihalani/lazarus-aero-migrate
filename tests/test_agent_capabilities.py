@@ -267,12 +267,16 @@ def test_grounding_on_does_not_drop_legacy_prompt_body(agent_mod):
 # ==========================================================================
 # 2. THINKING_LEVEL  (task #6, env LAZARUS_THINKING default "medium")
 # ==========================================================================
-# Assumed contract (confirm with integration-eng):
-#   * a configured non-default thinking level is passed via generation_config on
-#     interactions.create (interaction-scoped), e.g.
-#       extra_body / generation_config = {"thinking_level": "high"}.
-#   * default ("medium" / unset) sends NO generation_config — relying on the
-#     server-side default — so the call stays byte-identical to today.
+# Landed contract (agent._thinking_level + _create_interaction_stream):
+#   * env LAZARUS_THINKING. UNSET (or "off"/"none"/"default") => _thinking_level() is None
+#     => interactions.create gets NO generation_config (byte-identical to the shipped call).
+#   * an explicit level in {minimal,low,medium,high} => OPT-IN: the create() call carries
+#     generation_config = {"thinking_config": {"thinking_level": <level>}}. Explicit
+#     "medium" deliberately ALSO sends (it proves the knob round-trips), so the byte-identical
+#     baseline is the UNSET env, not the string "medium".
+#   * an unrecognized value => None (no-op, never an error).
+#   * if the managed-agent runtime rejects the thinking-bearing call, the impl sets
+#     THINKING_REJECTED and retries WITHOUT generation_config so the run still completes.
 def _gen_config_from_call(call):
     """Recover whatever the impl used to carry generation knobs, however nested."""
     if "generation_config" in call:
@@ -283,35 +287,112 @@ def _gen_config_from_call(call):
     return None
 
 
-def test_thinking_default_sends_no_generation_config(agent_mod, tmp_path, monkeypatch):
-    """Default thinking level => NO generation_config anywhere (shipped behavior)."""
-    monkeypatch.setenv("LAZARUS_THINKING", "medium")  # the documented default
+def test_thinking_unset_sends_no_generation_config(agent_mod, tmp_path):
+    """Default (env UNSET, cleared by the autouse fixture) => NO generation_config anywhere.
+
+    This is THE byte-identical-to-shipped case for Feature 2: with the flag off, the
+    create() call must look exactly like today's (no generation_config key at all).
+    """
     cobol = _write_cobol(tmp_path)
     client = _green_client()
     agent_mod.migrate(client, str(cobol))
     for call in client.interactions.calls:
         assert _gen_config_from_call(call) is None, \
-            "medium/default must not emit a generation_config (stay identical to today)"
+            "unset LAZARUS_THINKING must not emit a generation_config (identical to today)"
 
 
-def test_thinking_high_carries_configured_level(agent_mod, tmp_path, monkeypatch):
-    """LAZARUS_THINKING=high => the configured level reaches generation_config.
+@pytest.mark.parametrize("sentinel", ["off", "none", "default", "bogus-level", ""])
+def test_thinking_sentinel_values_send_no_generation_config(agent_mod, tmp_path,
+                                                            monkeypatch, sentinel):
+    """off/none/default (and any unrecognized value, and empty) all mean 'send nothing' —
+    an explicit, safe way to force the shipped default with no generation_config."""
+    monkeypatch.setenv("LAZARUS_THINKING", sentinel)
+    cobol = _write_cobol(tmp_path)
+    client = _green_client()
+    agent_mod.migrate(client, str(cobol))
+    for call in client.interactions.calls:
+        assert _gen_config_from_call(call) is None, \
+            f"LAZARUS_THINKING={sentinel!r} must be a no-op (no generation_config)"
 
-    Skips cleanly until integration-eng wires the env read; the assertion describes the
-    target shape (thinking_level somewhere in the generation config the SDK sees).
-    """
-    monkeypatch.setenv("LAZARUS_THINKING", "high")
+
+@pytest.mark.parametrize("level", ["minimal", "low", "medium", "high"])
+def test_thinking_explicit_level_carries_exact_shape(agent_mod, tmp_path, monkeypatch, level):
+    """An explicit level opts in and reaches the SDK as the EXACT documented shape:
+    generation_config = {"thinking_config": {"thinking_level": <level>}}.
+    Explicit "medium" sends too (the round-trip proof), unlike the UNSET default."""
+    monkeypatch.setenv("LAZARUS_THINKING", level)
     cobol = _write_cobol(tmp_path)
     client = _green_client()
     agent_mod.migrate(client, str(cobol))
 
     cfgs = [_gen_config_from_call(c) for c in client.interactions.calls]
     cfgs = [c for c in cfgs if c]
-    if not cfgs:
-        pytest.skip("LAZARUS_THINKING not wired into generation_config yet")
-    blob = str(cfgs).lower()
-    assert "high" in blob
-    assert "thinking" in blob
+    assert cfgs, f"LAZARUS_THINKING={level} should have emitted a generation_config"
+    for cfg in cfgs:
+        assert cfg == {"thinking_config": {"thinking_level": level}}
+
+
+def test_thinking_case_insensitive(agent_mod, tmp_path, monkeypatch):
+    """The env read lower-cases the value, so HIGH / High behave like high."""
+    monkeypatch.setenv("LAZARUS_THINKING", "HIGH")
+    cobol = _write_cobol(tmp_path)
+    client = _green_client()
+    agent_mod.migrate(client, str(cobol))
+    cfgs = [c for c in (_gen_config_from_call(c) for c in client.interactions.calls) if c]
+    assert cfgs
+    assert all(c == {"thinking_config": {"thinking_level": "high"}} for c in cfgs)
+
+
+def test_thinking_rejection_falls_back_without_generation_config(agent_mod, monkeypatch):
+    """If the managed-agent runtime rejects the thinking-bearing create(), the driver
+    retries WITHOUT generation_config (graceful no-op), sets THINKING_REJECTED, and the
+    run completes. Proven with a client whose first create() (carrying generation_config)
+    raises a thinking-rejection error and whose retry succeeds."""
+    monkeypatch.setenv("LAZARUS_THINKING", "high")
+
+    final = types.SimpleNamespace(id="iR", environment_id="envR",
+                                  steps=[FakeStep("model_output", GREEN)])
+
+    class _RejectingClient:
+        class interactions:
+            calls = []
+            @staticmethod
+            def create(**kwargs):
+                _RejectingClient.interactions.calls.append(kwargs)
+                if "generation_config" in kwargs:
+                    raise ValueError("Unknown field: generation_config.thinking_config")
+                def _stream():
+                    yield types.SimpleNamespace(event_type="interaction.completed",
+                                                interaction=final, interaction_id="iR")
+                return _stream()
+            @staticmethod
+            def get(interaction_id):
+                return final
+
+    agent_mod.THINKING_REJECTED = False  # reset module global before the run
+    itx = agent_mod._run_interaction(_RejectingClient(), input_text="x", environment="remote")
+
+    calls = _RejectingClient.interactions.calls
+    assert len(calls) == 2                                  # first (rejected) + retry
+    assert "generation_config" in calls[0]                  # the thinking-bearing attempt
+    assert "generation_config" not in calls[1]              # the clean retry
+    assert agent_mod.THINKING_REJECTED is True              # flagged for the UI
+    assert agent_mod.extract_environment_id(itx) == "envR"  # run still completed
+
+
+def test_thinking_unrelated_error_not_swallowed(agent_mod, monkeypatch):
+    """An UNRELATED error on the thinking-bearing call must NOT be swallowed by the
+    thinking fallback — it propagates (only thinking-shaped rejections fall back)."""
+    monkeypatch.setenv("LAZARUS_THINKING", "high")
+
+    class _ExplodingClient:
+        class interactions:
+            @staticmethod
+            def create(**kwargs):
+                raise RuntimeError("network connection reset by peer")
+
+    with pytest.raises(RuntimeError, match="connection reset"):
+        agent_mod._run_interaction(_ExplodingClient(), input_text="x", environment="remote")
 
 
 def test_thinking_never_sends_sampling_params(agent_mod, tmp_path, monkeypatch):

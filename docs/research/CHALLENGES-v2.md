@@ -713,3 +713,94 @@ qa's verification exactly. L15/task#11 CONFIRMED.
    reference py == live cobc, 10/10 for BOTH payroll + interest. Shipped origin/main d265bbb, 99
    tests, CI green. Reproducible check: `bash src/sample/build_samples.sh` (read-only).
 No fabricated golden. The second-sample honesty bar holds three ways. Task #11 fully CONFIRMED.
+
+---
+
+# ===== feature/agent-capabilities branch — L16+ (devils-advocate merge gate) =====
+
+> Scope: the 4 NEW agent capabilities being added behind flags (web-grounding,
+> thinking_level, cross-run skill library, whole-codebase multi-module). My sign-off
+> gates merge of feature/agent-capabilities → main. Baseline: branch HEAD == main
+> (26f65e4), 99 tests green. The shipped single-module path with ALL flags OFF must
+> stay byte-identical. Cross-checked against docs/RESEARCH_MANAGED_AGENTS.md §3.
+
+## L16 — PRE-IMPLEMENTATION GATE + the central trap (SDK acceptance ≠ runtime acceptance)
+
+**The trap I will hold every feature to.** The installed SDK (google-genai 2.6.0) is a
+Stainless/OpenAPI-generated client that models the UNION of every Interactions surface —
+model path AND agent path. I verified this directly:
+- `GenerationConfigParam` (the type `generation_config=` accepts) includes `thinking_level`
+  BUT ALSO `temperature`, `top_p`, `max_output_tokens`, `stop_sequences`, `seed` — all of
+  which RESEARCH §3 says the Antigravity AGENT rejects/ignores. So the SDK accepting a field
+  is NOT evidence the managed agent honors it.
+- The `Step` union the SDK can deserialize includes `FunctionCallStep`, `FileSearchCallStep`,
+  `GoogleMapsCallStep`, `MCPServerToolCallStep` — none of which the Antigravity agent emits
+  (RESEARCH §3). The SDK modeling a step type ≠ the agent producing it.
+CONSEQUENCE: "the SDK call didn't error" / "the type exists" is NOT acceptance evidence for
+ANY of the 4 features. Acceptance = the managed-agent RUNTIME demonstrably did the thing,
+shown in live stream blocks / usage fields. No exceptions.
+
+**Good news — the evidence FIELDS I demanded all exist in the 2.6.0 type model**, so qa CAN
+produce real proof (these are the exact things to capture):
+- web-grounding: `GoogleSearchCallStep` (type=`google_search_call`, `arguments.queries:[...]`)
+  and/or `URLContextCallStep` (type=`url_context_call`, `arguments.urls:[...]`) in the stream,
+  PLUS `usage.grounding_tool_count[].type == "google_search"` with count > 0.
+- thinking_level: `usage.total_thought_tokens` (a real field on `Usage`) CHANGING between
+  levels (e.g. minimal vs high), AND `ThoughtStep` (type=`thought`, `summary:[...]`) blocks.
+- cross-run skill library: a forged SKILL.md DISCOVERED on a GENUINELY FRESH run (new
+  environment, fork-clean — RESEARCH §4: "every run starts clean"). Surviving in the SAME
+  reused env is NOT cross-run; that is the already-shipped FORGE-retry beat, not a new feature.
+- whole-codebase multi-module: a rule the agent could ONLY derive by reading 2+ files together
+  (a genuine cross-module dependency), not two single-file runs concatenated.
+
+**HARD BLOCK conditions (any one blocks merge):**
+1. ANY flag-OFF change to the shipped path: `_build_prompt(cobol)` string, `build_base_environment()`
+   output (incl. NOT seeding new SKILL.md into `.agents/skills/` — currently empty, AGENTS.md only),
+   or the `interactions.create` kwargs (must remain NO `generation_config`). I diff these directly.
+2. Reaching for `function_calling` / structured output / sub-agents / `mcp` / `file_search` /
+   `computer_use`, or narrating a model-level capability as an agent-runtime one.
+3. A feature claimed VERIFIED on SDK-acceptance / mock evidence alone (the L16 trap).
+
+**Per-feature provisional verdict (pre-evidence): all HOLD** until qa supplies the blocks/tokens
+above from a real-key run on the as-shipped flag-gated code. thinking_level is the highest feasibility
+risk (generation_config is documented only for the MODEL path with `model=`; never demonstrated on the
+AGENT path with `agent=`; §3 rejects the sibling knobs) — it may well be NOT-WORKING (silently ignored
+or 400'd). web-grounding is the most likely to genuinely fire (google_search/url_context ARE supported
+agent tools per §3).
+
+## L17 — WEB-GROUNDING (Feature 1, b15d07e): flag-off SAFE, but the live-trace PROVABILITY is BROKEN (wrong SDK field names) — NEEDS FIX
+
+- **Flag-OFF regression: CLEAN.** `_build_prompt(cobol, ground=False)` → `preamble=""` → the
+  original body string is unchanged (byte-identical); `_build_forge_retry_prompt(..., ground=False)`
+  same; `migrate()` defaults `ground=_grounding_enabled()` = False; NO generation_config added; agent
+  tools unchanged (still default code_execution+google_search+url_context); base_environment untouched.
+  Honest design: the preamble only STEERS the agent toward two SUPPORTED tools (§3) — no unsupported
+  surface reached. No regression.
+- **Attack:** the feature's whole point of provability is the 🔎/🌐 breadcrumbs (and qa's evidence
+  bar) — does the breadcrumb code read the REAL SDK step shapes? I fed `_tool_breadcrumb` actual
+  google-genai 2.6.0 typed steps.
+- **EVIDENCE (reproduction, real SDK types, not assertion):**
+  - `GoogleSearchCallStep(arguments=Arguments(queries=[...]))` → `_tool_breadcrumb` returns **None**.
+    Code reads `arguments.query` (singular); the SDK field is `arguments.queries` (List[str], plural).
+    The flat fallback `_step_field(step,"query")` also misses `queries`. So when grounding GENUINELY
+    fires live, NO 🔎 breadcrumb appears.
+  - `URLContextCallStep(arguments=Arguments(urls=[...]))` → **None**. Same bug: code reads
+    `arguments.url`; SDK field is `arguments.urls` (List[str]).
+  - `GoogleSearchResultStep(result=[Result(search_suggestions=...)])` → `🔎 ✓` with NO snippet.
+    `_result_snippet` does `isinstance(result, str)`, but `result` is `List[Result]` (objects), not a
+    string → snippet empty.
+  - `ThoughtStep(summary=[{text:...}])` → `💭 <summary>` — this one IS correct.
+- **Why it matters:** this is the exact L16 trap in miniature — the code was written to a *guessed*
+  shape (singular query/url, string result), tests only checked the PROMPT text (preamble present/
+  absent), and no test constructs a real grounding step → the bug passed 99-green + the new suite.
+  On a live run, grounding could fire perfectly and the live trace would show NOTHING for the
+  search/url calls, defeating both the demo value AND qa's ability to show me the call blocks.
+- **Verdict: NEEDS FIX (feature-on path).** Two-line fix: read `arguments.queries` (join the list)
+  and `arguments.urls`; make `_result_snippet` handle `List[Result]` (pull `.search_suggestions` /
+  url-context result text). ADD a real unit test that builds a `GoogleSearchCallStep`/`URLContextCallStep`
+  with the SDK types (or the documented dict shape `{"arguments":{"queries":[...]}}`) and asserts the
+  🔎/🌐 breadcrumb renders — so this can't silently regress. SEPARATELY, qa should ALSO capture
+  `usage.grounding_tool_count[].type=="google_search"` count>0 as the AUTHORITATIVE server-side proof
+  (it's a real field on `Usage` and is independent of breadcrumb parsing). Until both the fix lands AND
+  qa shows real google_search_call/url_context_call blocks + grounding_tool_count on a live key,
+  web-grounding stays **HOLD** (NOT the "completed" the task board shows — task #5 reopened to me).
