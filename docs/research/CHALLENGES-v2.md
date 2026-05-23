@@ -566,3 +566,25 @@ HONEST LIMITATION (qa-disclosed, recorded): the breadcrumbs are ONLY `✓ ok`
 play-by-play of the cobc commands. The precise Phase-2 follow-on is to forward code_execution_call
 command text as breadcrumbs. This is Phase-2 polish (task #8) — does NOT reopen the Phase-1
 sign-off; it improves beyond it. My review remains CLOSED.
+
+---
+
+## L12 — FULLY CLOSED (8f1e7ea merged to main; verified two ways)
+
+qa proved the fix through the REAL server: drove server.py via FastAPI TestClient reproducing the
+exact post-stream condition I flagged (POST → drain SSE to completion → _RUNS popped → GET
+/api/download/{run_id}) → HTTP 200, text/x-python, served the module. Stronger than a mocked unit —
+the full request/stream/teardown/re-request cycle.
+
+I independently confirmed the fix is on MAIN (not just the Phase-2 branch): server.py:72-84 add
+`_COMPLETED_DOWNLOADS` (OrderedDict, 32-entry LRU cap, oldest evicted) populated with the module
+content; line 519 the download endpoint falls back to `_COMPLETED_DOWNLOADS.get(run_id)` when the
+run's _RUNS entry is gone post-stream. Memory-bounded + correct fallback. So GET /api/download now
+returns 200 after the stream ends. L12 CLOSED. (Note: 8f1e7ea "Phase 2: live tool breadcrumbs +
+post-run download retention" is merged to main — the download-retention half is live; the
+breadcrumb/phase-rail polish continues per qa.)
+
+## ALL FINDINGS RESOLVED — devil's-advocate review fully closed
+L1–L13 + L12: every item is CONFIRMED, FIXED+verified, or honestly deferred-with-note. Nothing
+open that affects honesty or completeness. Phase-1 shipped + signed off; the only continuing work
+is Phase-2 phase-rail/breadcrumb polish (engagement, not correctness). Sign-off stands.
