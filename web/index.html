@@ -6,124 +6,134 @@
   <title>LAZARUS · Autonomous Legacy Modernization</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Major+Mono+Display&family=IBM+Plex+Mono:wght@400;500;600;700&family=Archivo:wght@600;700;800;900&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Major+Mono+Display&family=IBM+Plex+Mono:wght@400;500;600&family=Archivo:wght@500;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="./style.css" />
 </head>
-<body>
-  <!-- ambient layers -->
-  <div class="grain" aria-hidden="true"></div>
-  <div class="scanlines" aria-hidden="true"></div>
-  <div class="vignette" aria-hidden="true"></div>
+<body class="mode-live">
+  <div class="bg" aria-hidden="true"></div>
 
-  <!-- ── masthead ─────────────────────────────────────────────── -->
-  <header class="masthead">
+  <!-- ── top bar ─────────────────────────────────────────────── -->
+  <header class="topbar">
     <div class="brand">
       <span class="brand-mark">⚯</span>
-      <h1 class="brand-name">LAZARUS</h1>
+      <span class="brand-name">LAZARUS</span>
       <span class="brand-sub">aero-migrate</span>
     </div>
-    <div class="tagline">raising&nbsp;dead&nbsp;code&nbsp;back&nbsp;to&nbsp;life</div>
-    <div class="masthead-meta">
-      <span class="meta-pill"><em>model</em> <b id="meta-agent">antigravity-preview</b></span>
-      <span class="meta-pill"><em>module</em> <b id="meta-module">—</b></span>
-      <span class="meta-pill iter"><em>iter</em> <b><span id="iter-counter">0</span>/<span id="iter-cap">4</span></b></span>
+    <div class="topbar-meta">
+      <span class="chip"><i>module</i><b id="meta-module">—</b></span>
+      <span class="chip"><i>model</i><b id="meta-agent">gemini-3.5-flash</b></span>
+      <span class="chip"><i>iteration</i><b><span id="iter-counter">0</span>&thinsp;/&thinsp;<span id="iter-cap">4</span></b></span>
       <span class="verdict-badge" id="verdict-badge"></span>
     </div>
   </header>
 
-  <!-- ── phase rail ───────────────────────────────────────────── -->
-  <nav class="phase-rail" id="phase-rail" aria-label="migration phases"></nav>
-
   <main id="stage" class="stage" data-phase="">
-    <!-- ── intake column ─────────────────────────────────────── -->
-    <section class="intake">
-      <div class="dropzone" id="dropzone">
-        <input type="file" id="file-input" accept=".cob,.cbl,.cpy,.txt" hidden />
-        <div class="drop-glyph">↧</div>
-        <div class="drop-head">DROP A COBOL MODULE</div>
-        <div class="drop-hint">.cob / .cbl — or</div>
-        <button class="preload-btn" id="preload-btn" type="button">load golden sample · payroll.cob</button>
-        <div class="drop-name" id="drop-name"></div>
-      </div>
-      <pre class="drop-preview" id="drop-preview"></pre>
+    <!-- ── HERO (pre-run intake) ─────────────────────────────── -->
+    <section class="hero">
+      <div class="hero-inner">
+        <p class="hero-kicker">autonomous legacy modernization</p>
+        <h1 class="hero-title">Raising dead code<br />back to life.</h1>
+        <p class="hero-sub">
+          LAZARUS migrates legacy <b>COBOL</b> to tested <b>Python</b> — then proves
+          it <b>byte&#8209;for&#8209;byte</b> against the original compiler, forging new
+          skills when it meets an idiom it doesn&rsquo;t know.
+        </p>
 
-      <!-- oracle money-shot banner -->
-      <div class="oracle-banner" id="oracle-banner"></div>
-
-      <!-- (c) business rules / archaeology -->
-      <div class="panel panel-rules">
-        <div class="panel-head">
-          <span class="panel-tab">BUSINESS&nbsp;RULES</span>
-          <span class="panel-note">recovered institutional knowledge · <span id="rules-count">0</span></span>
+        <div class="dropzone" id="dropzone">
+          <input type="file" id="file-input" accept=".cob,.cbl,.cpy,.txt" hidden />
+          <div class="drop-glyph">↧</div>
+          <div class="drop-head">Drop a COBOL module</div>
+          <div class="drop-hint">.cob&nbsp;·&nbsp;.cbl&nbsp;·&nbsp;.cpy</div>
+          <button class="preload-btn" id="preload-btn" type="button">
+            load golden sample — payroll.cob
+          </button>
+          <div class="drop-name" id="drop-name"></div>
         </div>
-        <div class="rules-list" id="rules-list"></div>
+
+        <div class="hero-status"><span class="status-dot"></span><span>system ready · drop a module to begin</span></div>
       </div>
     </section>
 
-    <!-- ── trace column (b) ──────────────────────────────────── -->
-    <section class="panel panel-trace">
-      <div class="panel-head">
-        <span class="panel-tab live">AGENT&nbsp;WORKING</span>
-        <span class="panel-note">interaction.steps · live trace</span>
-      </div>
-      <div class="trace-stream" id="trace-stream"></div>
-    </section>
+    <!-- ── CONSOLE (revealed once a module is armed) ─────────── -->
+    <section class="console">
+      <nav class="phase-rail" id="phase-rail" aria-label="migration phases"></nav>
 
-    <!-- ── proof column ──────────────────────────────────────── -->
-    <section class="proof">
-      <!-- (d) diff viewer -->
-      <div class="panel panel-diff">
-        <div class="panel-head">
-          <span class="panel-tab">COBOL ⇄ PYTHON</span>
-          <span class="panel-note">side-by-side translation</span>
-        </div>
-        <div class="diff-grid">
-          <div class="diff-pane">
-            <div class="diff-name" id="diff-left-name">—</div>
-            <div class="code-block" id="diff-left"></div>
-          </div>
-          <div class="diff-pane">
-            <div class="diff-name" id="diff-right-name">—</div>
-            <div class="code-block" id="diff-right"></div>
-          </div>
-        </div>
-      </div>
+      <div class="console-grid">
+        <!-- LEFT · narrative spine -->
+        <section class="trace-col">
+          <header class="col-head">
+            <span class="col-title"><span class="live-dot"></span>Agent working</span>
+            <span class="col-note">live trace</span>
+          </header>
+          <pre class="src-peek" id="drop-preview" hidden></pre>
+          <div class="trace-stream" id="trace-stream"></div>
+        </section>
 
-      <!-- (e) pytest terminal -->
-      <div class="panel panel-term">
-        <div class="panel-head">
-          <span class="panel-tab">EQUIVALENCE&nbsp;TESTS</span>
-          <span class="term-verdict" id="pytest-verdict"></span>
-        </div>
-        <div class="term-body" id="pytest-body"></div>
-      </div>
+        <!-- RIGHT · proof artifacts (active phase is highlighted) -->
+        <section class="proof-col">
+          <article class="card" data-when="recover">
+            <header class="card-head">
+              <span class="card-title">Business rules</span>
+              <span class="card-note"><b id="rules-count">0</b> recovered</span>
+            </header>
+            <div class="card-body"><div class="rules-list" id="rules-list"></div></div>
+          </article>
 
-      <!-- (f) forge / git-diff -->
-      <div class="panel panel-forge">
-        <div class="panel-head">
-          <span class="panel-tab forge-tab">FORGE · SELF-AUTHORED SKILL</span>
-          <span class="panel-note" id="forge-reason"></span>
-        </div>
-        <div class="forge-body" id="forge-body"></div>
+          <article class="card" data-when="translate">
+            <header class="card-head">
+              <span class="card-title">COBOL → Python</span>
+              <span class="card-note">side&#8209;by&#8209;side</span>
+            </header>
+            <div class="card-body">
+              <div class="diff-grid">
+                <div class="diff-pane">
+                  <div class="diff-name" id="diff-left-name">—</div>
+                  <div class="code-block" id="diff-left"></div>
+                </div>
+                <div class="diff-pane">
+                  <div class="diff-name" id="diff-right-name">—</div>
+                  <div class="code-block" id="diff-right"></div>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <article class="card panel" data-when="test">
+            <header class="card-head">
+              <span class="card-title">Equivalence tests</span>
+              <span class="term-verdict" id="pytest-verdict"></span>
+            </header>
+            <div class="card-body">
+              <div class="oracle-banner" id="oracle-banner"></div>
+              <div class="term-body" id="pytest-body"></div>
+            </div>
+          </article>
+
+          <article class="card panel" data-when="forge">
+            <header class="card-head forge-head">
+              <span class="card-title">Forge — self-authored skill</span>
+              <span class="card-note" id="forge-reason"></span>
+            </header>
+            <div class="card-body"><div class="forge-body" id="forge-body"></div></div>
+          </article>
+        </section>
       </div>
     </section>
   </main>
 
-  <!-- ── transport bar (live) ─────────────────────────────────── -->
+  <!-- ── transport ───────────────────────────────────────────── -->
   <footer class="transport">
-    <div class="transport-left">
-      <button class="t-btn play" id="play-btn" data-playing="false" title="run migration (space)">
-        <span class="ic-play">▶</span><span class="ic-pause">❚❚</span>
+    <div class="t-left">
+      <button class="t-btn" id="play-btn" data-playing="false" title="run migration (space)">
+        <span class="ic-play">▶</span><span class="ic-pause">❚❚</span><span class="t-label">run</span>
       </button>
-      <button class="t-btn" id="restart-btn" title="re-run (r)">↺</button>
+      <button class="t-btn ghost" id="restart-btn" title="re-run (r)">↺<span class="t-label">re-run</span></button>
       <span class="clock" id="clock">live</span>
+      <span class="t-status"><span class="status-dot"></span><span id="meta-status">booting…</span></span>
     </div>
-    <div class="transport-right">
-      <span class="status" id="meta-status">booting…</span>
-      <button class="download-btn" id="download-btn" disabled>
-        <span class="dl-ic">⤓</span> DOWNLOAD MIGRATED MODULE
-      </button>
-    </div>
+    <button class="download-btn" id="download-btn" disabled>
+      <span class="dl-ic">⤓</span> Download migrated module
+    </button>
   </footer>
 
   <script type="module" src="./src/app.js"></script>
