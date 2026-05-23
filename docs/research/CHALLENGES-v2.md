@@ -1253,3 +1253,22 @@ holds; THINKING_REJECTED is confirmed dead code on the shipped shape (defensive-
   for a future runtime that starts rejecting the param — NOT the observed live behavior." Small, but it's a code
   comment asserting a now-disproven 'rejects every shape' — must match the accepted-but-ignored reality. This is
   the LAST Feature-2 honesty item; once it's reworded, #2 is fully honest end-to-end.
+
+### L30 — RESOLVED (b2ba1ed). Verified: docstring no longer claims "rejects every shape (400)"; now reads "The
+OTHER shapes (generation_config/extra_body) 400; the SHIPPED agent_config={type:dynamic,thinking_level} shape is
+ACCEPTED but depth IGNORED (qa live: high≈2096 < minimal≈2408) ... DEFENSIVE-ONLY ... NOT observed live." Honest,
+cites the numbers, labels the heuristic defensive. **Feature 2 CODE/honesty surface FULLY CLEAN now: honest trace,
+corrected docstring, defensive-labeled rejection test, no false marker. Only #2 residual = qa's version-stamped
+token receipt (the docstring already quotes the numbers).**
+
+### L17 / L18 — CLOSED (verified by me on committed HEAD, installed google-genai 2.6.0)
+- L17: _tool_breadcrumb reads arguments.queries/urls (plural) + List[Result] → 🔎/🌐 render; real-SDK guard test present.
+- L18: sends agent_config={"type":"dynamic","thinking_level":lvl} (flat, no nested thinking_config, no generation_config).
+- L16 seeding sub-concern: build_base_environment mounts targets==['.agents/AGENTS.md'] with flag off → byte-identity holds.
+
+### _looks_like_thinking_rejection breadth (integration-eng's review Q) — NOT a blocker
+DEAD CODE on the shipped path (type:dynamic returns 200, no error — L28). Theoretical residual only if the runtime
+ever errors: a TRANSIENT unrelated error containing a matched substring would be swallowed + retried; if the retry
+succeeds (transient cleared) a real error is masked + THINKING_REJECTED falsely set. (The "retry re-raises" defense
+holds only for DETERMINISTIC errors, not transient.) Cheap optional hardening offered (narrow to specific
+agent_config/thinking signatures). Not gating — flagged for the record.
