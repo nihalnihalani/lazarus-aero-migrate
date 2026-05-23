@@ -1228,3 +1228,28 @@ of feature/agent-capabilities → main is cleared.
 - **Verdict: not a code bug (suite green; resolver robust) — a VERIFICATION-HYGIENE finding that gates the
   trustworthiness of the relayed live verdicts. Fix: frontend corrects the inverted comment; qa stamps SDK
   version on all 4 pending receipts.**
+
+## L28 — DEFINITIVELY SETTLED by qa's re-verification: ACCEPTED-BUT-IGNORED on the shipped shape (matches my L24/L28 prediction)
+qa re-ran the SHIPPED `agent_config={"type":"dynamic","thinking_level":<lvl>}` live and RETRACTED their earlier
+"rejected→graceful no-op" verdict: it is ACCEPTED (no 400), depth SILENTLY IGNORED — interleaved identical-prompt
+samples high mean ≈2096 vs minimal mean ≈2408 thought tokens (high < minimal = noise on default). This is exactly
+what I predicted (L24/L28) and matches [[thinking-level-rejected-live]]. The 400s were the OTHER shapes (L29
+version/shape confusion). #2 mechanism = ACCEPTED-BUT-IGNORED, SETTLED. The user-facing "no depth control" claim
+holds; THINKING_REJECTED is confirmed dead code on the shipped shape (defensive-only).
+
+## L30 — Last Feature-2 honesty hole: agent.py docstring (line ~695) still asserts "rejects EVERY thinking config shape (400)" — FALSE for the shipped shape
+- **The hole (qa-flagged + I confirmed on committed HEAD a33324f):** `_looks_like_thinking_rejection`'s docstring
+  says "qa LIVE-PROVED the managed-agent runtime rejects every thinking config shape (400)" and frames the shipped
+  shape as "if THAT is also rejected." But qa's own re-verification (L28 above) proves the shipped type:dynamic
+  shape is ACCEPTED-but-ignored, NOT rejected. So the docstring overclaims "every shape 400s" and tells the wrong
+  story about the shape we actually send. (The OTHER functions' docstrings — lines 728/744/767 — correctly say
+  accepted-but-ignored, so the file is internally contradictory.)
+- **What's ALREADY honest (verified):** no bare `[thinking_level=X]` marker anywhere in src/ or web/ (HOLE 2 from
+  qa = already fixed; the live trace says "ACCEPTS the param but does NOT honor depth"). The rejection test is
+  ALREADY labeled "DEFENSIVE" (HOLE 1 = documented as insurance, not live behavior — acceptable).
+- **Verdict: NEEDS FIX (docstring only, integration-eng lane).** Reword line ~695 to: "The OTHER thinking shapes
+  (top-level generation_config / extra_body variants) 400; the shipped agent_config={type:dynamic,thinking_level}
+  shape is ACCEPTED but the depth is IGNORED (qa live). This heuristic + the retry are DEFENSIVE-ONLY insurance
+  for a future runtime that starts rejecting the param — NOT the observed live behavior." Small, but it's a code
+  comment asserting a now-disproven 'rejects every shape' — must match the accepted-but-ignored reality. This is
+  the LAST Feature-2 honesty item; once it's reworded, #2 is fully honest end-to-end.
