@@ -1358,3 +1358,27 @@ The L31 docs softening ("silently ignored" → inconclusive) still applies.
   assertion). 
 **DEVIL'S-ADVOCATE REVIEW CLOSED.** Every finding L16-L31 is fixed/verified/honestly-deferred; no open honesty,
 feasibility, or regression issue. Merge (6504a78) stands; #9 is the only follow-up.
+
+## L32 — CORRECTION to my own gate criterion: `usage.grounding_tool_count` is NOT a usable receipt (runtime leaves it None). Use the google_search_call STEP BLOCKS.
+- **My earlier criterion was wrong:** in L17/L25 I told qa+team-lead that `usage.grounding_tool_count>0` was an
+  "authoritative server-side proof" for grounding. qa empirically DISPROVED that: on a real grounded run (3 searches
+  fired) the full usage object had `grounding_tool_count=None` (with total_thought_tokens=4094, total_tokens=153935).
+  I cross-checked the SDK: `Usage.grounding_tool_count: Optional[List[GroundingToolCount]] = None` — the field EXISTS
+  in the schema but the Antigravity runtime does NOT populate it. So gating on it = a permanent FALSE NEGATIVE.
+- **The RELIABLE receipt is the `google_search_call` STEP BLOCKS in the STREAM** (each with a unique id; arguments=null
+  at step.start, query populates at step.stop; type is the fixed Literal "google_search_call"). The SHIPPED L25
+  instrumentation already counts THESE (agent.py grounding_calls, incremented on step.start) — NOT grounding_tool_count
+  — so the shipped code uses the correct signal; only my stated criterion needed fixing. (Same class as the L26
+  function_call lesson and the get()-flattening trap: trust the STREAM step blocks, not a derived/aggregate field.)
+- **#1 GROUNDING — receipt (a) is the STRONGEST proof and CLOSES L16/L25:** qa ran grounding on a HARDER, un-revealed
+  idiom (per my L25 ask) — "OCCURS DEPENDING ON + SYNCHRONIZED COMP-1 slack-byte computation", NOT hinted — on
+  .venv/2.6.0, and captured 3 raw google_search_call blocks (ids e8f7lr9u / of6ebqyy / 2dkau3cb). This is better than
+  the payroll run (where grounding barely fired) because the idiom forces real research. #1 fully VERIFIED, seen, on
+  the pin.
+- **Action:** I will NOT re-assert grounding_tool_count anywhere; the README already says "ran 3 google_search_calls"
+  (step blocks), not a count field, so the shipped claim is on the reliable signal. No doc change needed beyond this
+  record. Lesson logged for future SDK-field gates: verify a field is RUNTIME-POPULATED before gating on it.
+- Remaining follow-up #9 items still open (qa in flight): (b) function_call NAMES from a migration-class run
+  (the pure-search run had 0 function_call blocks — consistent; the 9 were in the 884s migration), (c) banked SKILL.md
+  on disk, (d) cross-module rule TEXT. These are the non-blocking artifact-banking items; #1 grounding does not wait
+  on them.
