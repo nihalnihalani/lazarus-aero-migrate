@@ -137,10 +137,13 @@ function wireControls() {
   $('#restart-btn').addEventListener('click', () => state.loaded && startLive());
   $('#download-btn').addEventListener('click', () => state.renderer.triggerDownload());
 
-  // Accordion: click a proof card's header to toggle it open (overrides the
-  // auto-open that follows the active phase). Keeps only one beat on screen.
-  document.querySelectorAll('.proof-col .card-head').forEach((h) =>
-    h.addEventListener('click', () => h.parentElement.classList.toggle('open')));
+  // Agent activity drawer: collapsed shows only the latest action; toggle for the full log.
+  const activity = $('#activity');
+  const hint = $('#activity-hint');
+  $('#activity-toggle')?.addEventListener('click', () => {
+    const open = activity.classList.toggle('open');
+    if (hint) hint.textContent = open ? 'hide log ‹' : 'show full log ›';
+  });
 
   document.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT') return;
