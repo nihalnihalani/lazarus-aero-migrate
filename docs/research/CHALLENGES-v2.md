@@ -548,3 +548,21 @@ HONEST NUANCE (qa-disclosed, recorded so it's not a surprise to a judge):
   would forward `code_execution_call` command text as breadcrumbs so the rail marches live.
 NET: a strictly-live judge sees a live, ticking, accruing screen — not frozen. Phase-1 L11 bar
 (never looks hung) is MET in-browser. Richer beat-by-beat progression is Phase-2, not a blocker.
+
+---
+
+## L11 — Phase-2 improvement (8f1e7ea breadcrumbs): trace now accrues incrementally (qa, in-flight)
+
+Phase-2 (8f1e7ea) adds tool breadcrumbs; qa's in-flight run shows 12 `✓ ok` breadcrumbs streaming
+at 11/13/21/27/32/39/44/53/55/57/65/89s — the activity log now gets NEW lines THROUGHOUT the run,
+not just one end-block burst. So L11 mitigation is now TWO layers: (1) heartbeat timer + reassurance
+(browser-confirmed), (2) incremental `✓ ok` breadcrumbs. Strictly better than the run I analyzed for
+the original frozen finding.
+
+HONEST LIMITATION (qa-disclosed, recorded): the breadcrumbs are ONLY `✓ ok`
+(code_execution_result) — ZERO `$ <command>` (code_execution_call) breadcrumbs. So they show
+"something happened" but not WHAT, and `✓ ok` matches no phase keyword so it can't drive the rail
+(rail still advances off end-block prose). Net: "agent is doing things," not a rich
+play-by-play of the cobc commands. The precise Phase-2 follow-on is to forward code_execution_call
+command text as breadcrumbs. This is Phase-2 polish (task #8) — does NOT reopen the Phase-1
+sign-off; it improves beyond it. My review remains CLOSED.
