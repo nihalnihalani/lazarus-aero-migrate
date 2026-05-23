@@ -85,6 +85,23 @@ def _grounding_enabled() -> bool:
     """
     return os.environ.get("LAZARUS_GROUND", "").strip().lower() in {"1", "true", "yes", "on"}
 
+
+_THINKING_LEVELS = {"minimal", "low", "high"}   # "medium" is the runtime default (no-op)
+
+
+def _thinking_level() -> str | None:
+    """The interaction-scoped thinking level to request, or None to send nothing.
+
+    LAZARUS_THINKING (Feature 2). The shipped path sends NO generation_config and relies
+    on the agent's "medium" default (docs/RESEARCH §3: thinking_level default is "medium").
+    So the DEFAULT VALUE — and "medium" specifically — must keep sending nothing, staying
+    byte-identical to today. We return a level ONLY for a value that genuinely DIFFERS from
+    the default (minimal|low|high). "medium"/"default"/"off"/"none"/unset/unrecognized all
+    return None (no-op, never an error).
+    """
+    raw = os.environ.get("LAZARUS_THINKING", "").strip().lower()
+    return raw if raw in _THINKING_LEVELS else None
+
 # Heuristics for reading the agent's terminal message (the demo also shows this on screen).
 _PASS_RE = re.compile(
     r"(all\s+(\d+\s+)?(equivalence\s+)?tests?\b[^.\n]{0,40}\bpass"  # "All 30 Equivalence Tests: PASS"
@@ -347,6 +364,27 @@ def _result_snippet(step) -> str:
     return ""
 
 
+def _thought_tokens(interaction) -> int | None:
+    """usage.total_thought_tokens off a (completed) interaction, or None if absent.
+
+    The data model exposes usage.total_thought_tokens (gemini-interactions-api skill); we
+    read it best-effort (attr OR dict) so a positive value PROVES thinking ran, and a
+    missing field never errors.
+    """
+    usage = getattr(interaction, "usage", None)
+    if usage is None and isinstance(interaction, dict):
+        usage = interaction.get("usage")
+    if usage is None:
+        return None
+    tok = getattr(usage, "total_thought_tokens", None)
+    if tok is None and isinstance(usage, dict):
+        tok = usage.get("total_thought_tokens")
+    try:
+        return int(tok) if tok else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _thought_summary_text(step) -> str:
     """Join the text parts of a `thought` step's summary (verified §8 shape:
     thought -> {type, summary:[{type:"text", text}], signature}). Best-effort."""
@@ -416,6 +454,60 @@ def _forged_skill_path(output_text: str) -> str | None:
     return m.group(1) if m else None
 
 
+def _looks_like_thinking_rejection(exc: Exception) -> bool:
+    """Heuristic: did this error come from sending generation_config/thinking_config?
+
+    The managed-agent runtime MAY reject an interaction-scoped generation_config the same
+    way it rejects temperature (docs/RESEARCH §3 lists thinking_level as a MODEL knob; the
+    AGENT path accepting it is UNVERIFIED). We can't know the exact exception type from a
+    dev box, so we match the message defensively and treat ANY error on the thinking-bearing
+    call as "retry without it" — the retry path re-raises if it ALSO fails, so a genuine
+    unrelated error still surfaces.
+    """
+    msg = str(exc).lower()
+    return any(k in msg for k in (
+        "thinking", "generation_config", "generationconfig", "unknown field",
+        "unexpected", "invalid argument", "not supported", "unsupported",
+    ))
+
+
+def _create_interaction_stream(client: genai.Client, *, input_text: str, environment):
+    """interactions.create(stream=True), optionally with an interaction-scoped thinking
+    config (Feature 2). DEFAULT (LAZARUS_THINKING unset): sends NO generation_config —
+    byte-identical to the shipped call. When a level IS configured we attach
+    generation_config={"thinking_config":{"thinking_level": <lvl>}}; if the agent runtime
+    rejects it (graceful no-op), we set THINKING_REJECTED and retry WITHOUT it so the run
+    still completes. Returns the stream iterator.
+    """
+    base_kwargs = dict(
+        agent=AGENT_ID,
+        input=input_text,
+        stream=True,
+        extra_body={"environment": environment},   # env via extra_body (verified surface)
+    )
+    level = _thinking_level()
+    if level is None:
+        return client.interactions.create(**base_kwargs)
+
+    # Opt-in: request the thinking level (interaction-scoped generation_config).
+    thinking_kwargs = dict(base_kwargs)
+    thinking_kwargs["generation_config"] = {"thinking_config": {"thinking_level": level}}
+    try:
+        stream = client.interactions.create(**thinking_kwargs)
+        emit_to_ui(f"[thinking_level={level}]\n")
+        return stream
+    except Exception as exc:
+        if not _looks_like_thinking_rejection(exc):
+            raise  # an unrelated failure — don't swallow it behind the thinking flag
+        global THINKING_REJECTED
+        THINKING_REJECTED = True
+        emit_to_ui(
+            "[thinking_level rejected by the managed-agent runtime — proceeding without it "
+            f"(requested {level})]\n"
+        )
+        return client.interactions.create(**base_kwargs)
+
+
 def _run_interaction(client: genai.Client, *, input_text: str, environment):
     """One streamed interaction. Forwards step.delta text to the UI and accumulates the
     model output FROM THE STREAM.
@@ -429,11 +521,8 @@ def _run_interaction(client: genai.Client, *, input_text: str, environment):
     attached as `_lazarus_output_text` and the client attached so extract_output_text can
     do a get() fallback if needed.
     """
-    stream = client.interactions.create(
-        agent=AGENT_ID,
-        input=input_text,
-        stream=True,
-        extra_body={"environment": environment},   # env via extra_body (verified surface)
+    stream = _create_interaction_stream(
+        client, input_text=input_text, environment=environment
     )
 
     completed = None
@@ -466,6 +555,11 @@ def _run_interaction(client: genai.Client, *, input_text: str, environment):
             # env id is still present on the (otherwise-empty) completed interaction.
             env_id = extract_environment_id(completed) or env_id
             interaction_id = getattr(completed, "id", None) or interaction_id
+            # Surface thinking token usage (Feature 2) if the runtime reports it — proves
+            # the thinking config actually took effect. No-op when usage/field is absent.
+            tok = _thought_tokens(completed)
+            if tok:
+                emit_to_ui(f"[thought_tokens={tok}]\n")
 
     # Authoritative final fetch: the completed event's payload is empty, so re-fetch the
     # full interaction object when we can. Fall back to the completed event if get() fails.
