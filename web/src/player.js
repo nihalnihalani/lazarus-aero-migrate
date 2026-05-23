@@ -25,9 +25,25 @@ export class LivePlayer {
   constructor(meta = {}) {
     this.meta = meta;
     this.bus = makeBus();
+    this.events = [];
   }
   on(type, cb) { return this.bus.on(type, cb); }
   /** Feed one canonical Event into the renderer. */
-  push(ev) { this.bus.emit('event', ev); }
-  reset() { this.bus.emit('reset', { meta: this.meta }); }
+  push(ev) {
+    this.events.push(ev);
+    this.bus.emit('event', ev);
+  }
+  reset() {
+    this.events = [];
+    this.bus.emit('reset', { meta: this.meta });
+  }
+  /** Synchronously replay events up to index for state scrubbing */
+  seek(index) {
+    this.bus.emit('reset', { meta: this.meta });
+    const subset = this.events.slice(0, index + 1);
+    // Suppress any delayed typewriter animations or visual offsets by replaying immediately
+    for (const ev of subset) {
+      this.bus.emit('event', { ...ev, _seeking: true });
+    }
+  }
 }
