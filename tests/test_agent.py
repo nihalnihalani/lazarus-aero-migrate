@@ -225,6 +225,16 @@ def test_build_prompt_uses_golden_as_primary_not_apt(agent_mod):
     assert "apt-get" not in low and "apt install" not in low
 
 
+def test_build_prompt_names_true_idiom_not_comp3(agent_mod):
+    """C13 (narrative honesty): the diagnosis the agent is steered toward must be the
+    REAL idiom (numeric DISPLAY de-editing + round-half-up), and must explicitly say it
+    is NOT the COMP-3 storage (which has zero effect on output bytes)."""
+    low = agent_mod._build_prompt("IDENTIFICATION DIVISION.").lower()
+    assert "round" in low and ("half-up" in low or "round_half_up" in low)
+    assert "display" in low                       # the de-editing/format idiom
+    assert "not the comp-3" in low or "not comp-3" in low
+
+
 def test_forge_retry_prompt_instructs_explicit_reread(agent_mod):
     """The SAFE FORGE pattern: the retry prompt MUST explicitly tell the agent to
     re-read .agents/skills/ (do not rely on silent mid-run auto-reload)."""

@@ -47,6 +47,55 @@ def test_stream_unknown_run_id_404(monkeypatch):
         assert resp.status_code == 404
 
 
+def _make_tar_bytes(members: dict[str, str]) -> bytes:
+    """Build an in-memory tar (path -> text content) for download-extraction tests."""
+    import io
+    import tarfile
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tar:
+        for path, text in members.items():
+            data = text.encode()
+            info = tarfile.TarInfo(name=path)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
+def test_extract_migrated_pulls_payroll_py_from_workspace():
+    """The migrated module is extracted from /workspace/payroll.py inside the env tarball."""
+    tar = _make_tar_bytes({
+        "workspace/payroll.py": "print('migrated')\n",
+        "workspace/other.txt": "ignore me\n",
+    })
+    content = server._extract_migrated_from_tar(tar, "payroll.py")
+    assert content == "print('migrated')\n"
+
+
+def test_extract_migrated_returns_none_when_absent():
+    tar = _make_tar_bytes({"workspace/notes.md": "no python here\n"})
+    assert server._extract_migrated_from_tar(tar, "payroll.py") is None
+
+
+def test_download_migrated_uses_injected_fetcher(monkeypatch):
+    """_download_migrated fetches the env tarball (injected here) + extracts the module —
+    no network/key needed for the unit test."""
+    tar = _make_tar_bytes({"workspace/payroll.py": "X = 1\n"})
+    out = server._download_migrated(
+        env_id="env-xyz", fetch_tarball=lambda env_id: tar
+    )
+    assert out == "X = 1\n"
+
+
+def test_download_migrated_none_without_env_id():
+    assert server._download_migrated(env_id=None) is None
+
+
+def test_download_migrated_none_on_fetch_error():
+    def boom(env_id):
+        raise RuntimeError("network down")
+    assert server._download_migrated(env_id="e", fetch_tarball=boom) is None
+
+
 def test_post_then_stream_emits_canonical_events(monkeypatch):
     """POST -> run_id, then GET /api/stream/{run_id} forwards canonical events."""
     monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-real")

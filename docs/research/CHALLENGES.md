@@ -20,7 +20,7 @@ investor are in the room and will fact-check every number and every platform cla
 | C4 | Agent compiles + runs real COBOL via GnuCOBOL live | load-bearing (#1 anti-objection) | **NEEDS FIX** (was FALSE; corrected). Only the "apt-get / pre-install into base_environment" WORDING is wrong. **Live-compile is VIABLE** (task #8): the AGENT micromamba/conda-forge-installs `gnucobol` (ships its OWN compiler+libcob+gmp, no system gcc, no root) at pre-warm into the reused env_id → no network needed live. golden_io.json = floor. Mounted-binary path REJECTED ("Binary file support is not yet available"). Falsifiability INTACT. |
 | C5 | "byte-for-byte" diff is robust | load-bearing (demo) | **NEEDS FIX (TESTED)** — zero-pad format + half-up rounding fail naively; proven fix = Decimal/HALF_UP + `{:07d}.{:02d}` (9/9 byte-exact) |
 | C6 | Sandbox spec (Python 3.12 / Node 22 / 4CPU·16GB / 15-min snapshot) | medium | **CONFIRMED (repo correct)** — lead fetched agent-environment.md.txt: "4 cores" + "16 GB" are VERBATIM-sourced; all repo specs (3.12 / Node 22 / 4 CPU / 16 GB / 15-min snapshot / 7-day retention / unrestricted network) VERIFIED. Hackathon hands out Gemini API keys → ai.google.dev governs. Do NOT edit. |
-| C7 | NJ impact stats (1600%, 575k, "begged on live TV") | medium (Impact = 20%) | **MIXED** — 1600% CONFIRMED; 575k UNVERIFIED; "live TV" embellished |
+| C7 | NJ impact stats (1600%, 575k, "begged on live TV") | medium (Impact = 20%) | **RESOLVED** — 1600% CONFIRMED; 575k was unsourced → doc-keeper fixed to "362,000 in two weeks" (NJ DOL 4/2/2020; NOT "first week" — that's the 2-wk total) + "publicly called for volunteers." |
 | C8 | $2.41T tech debt; 18–23% wasted; $30B market | medium (Impact = 20%) | **CONFIRMED** (with date caveats) |
 | C9 | "1M-token context" relevance to a ~150-line module | low (framing) | **NEEDS FIX** — non-sequitur a judge will needle |
 | C10 | `MAX_ITERATIONS = 4` "hard cap" + "visible counter" | medium (demo safety) | **RESOLVED (verified in code)** — agent.py now has a real `range(1, MAX_ITERATIONS+1)` loop + `emit_iteration` counter; server.py forwards it to the UI + `/api/health`. Orchestrator-enforced, not prompt-only. |
@@ -28,7 +28,7 @@ investor are in the room and will fact-check every number and every platform cla
 | C12 | Demo determinism / cold-start | medium (Demo = 45%) | **ACCEPTED RISK** — mitigations exist; tighten |
 | C13 | Demo blames "COMP-3" but COMP-3 isn't what fails | medium (signature beat honesty) | **NEEDS FIX (PROVEN) — NOT YET LANDED** — relabel still missing from mock-run.json (drives UI), STREAM_CONTRACT, DEMO, README, ARCHITECTURE, AGENTS.md, test_agent.py. Highest-priority remaining honesty fix. |
 | C14 | BUILD_PLAN "install GnuCOBOL" + "no network" contradiction | medium (build day) | **NEEDS FIX** — impossible task + self-contradiction; resolve with C4 |
-| C15 | `google-genai>=1.55.0` minimum version | low (it installs) | **RESOLVED (catch was right)** — true floor is `>=2.0.0` (1.55.0 was the model-interactions path). Repo already bumped to `>=2.6.0,<3.0.0`. |
+| C15 | `google-genai>=1.55.0` minimum version | low (it installs) | **RESOLVED for install; NEEDS FIX for 3 stale docs** — true floor is `>=2.4.0` (client.agents ships in 2.4.0, NOT 2.0.0). Pinned `>=2.6.0` is fine; but README L51 / ARCHITECTURE L77 / requirements.txt L8 still say "2.0.0" — bump to 2.4.0. |
 | C16 | Demo UI says "hot-reloading agent" mid-interaction | medium ($5k beat honesty) | **NEEDS FIX — NOT LANDED** in web/ (mock-run.json L80/83, STREAM_CONTRACT L107/119/121). Mid-interaction hot-reload is UNVERIFIED; docs already say "re-discovery on next pass" — UI must match. Fix in the same C13 web/ pass. |
 
 ---
@@ -273,14 +273,18 @@ investor are in the room and will fact-check every number and every platform cla
     - https://whyy.org/articles/why-n-j-wants-coders-fluent-in-a-60-year-old-language-in-the-middle-of-a-pandemic/
   - **Governor's COBOL call — CONFIRMED** (Murphy press briefing; many volunteers responded).
     - https://www.cnbc.com/2020/04/06/new-jersey-seeks-cobol-programmers-to-fix-unemployment-system.html
-  - **"575,000+ backlogged in weeks" — UNVERIFIED.** Sources cite **362,000** in week one
-    and **~1 million** over two months. I found NO source for "575,000 backlogged." Looks
-    fabricated or mis-transcribed.
+  - **"575,000+ backlogged in weeks" — UNVERIFIED / no source.** I found NO source for
+    "575,000 backlogged." (CORRECTION to my own earlier note: I'd suggested "362,000 in the
+    first week" as the replacement — that is ALSO WRONG. doc-keeper found the NJ DOL primary
+    source: **362,000 is the TWO-WEEK total** (week ending 3/28 = 206,253; prior week =
+    155,815). First week alone was ~206K, not 362K.)
+    - https://www.nj.gov/labor/lwdhome/press/2020/20200402_unemployment.shtml
   - **"begged on live TV" — EMBELLISHED.** It was a press briefing / news appeal, not a
     dramatic live-TV plea. Minor, but a journalist-minded judge could call it.
-- **Verdict: MIXED → NEEDS FIX on the 575k number.** Replace "575,000+ filings backlogged"
-  with a sourced figure: "362,000 claims in the first week" or "over 1 million in two
-  months." Soften "begged on live TV" to "publicly appealed for COBOL programmers."
+- **Verdict: MIXED → NEEDS FIX on the 575k number (RESOLVED by doc-keeper).** doc-keeper
+  applied the correct sourced figure: "over **362,000** new claims in **two weeks**" (NJ DOL,
+  4/2/2020) and "publicly called for volunteers." Do NOT use "362,000 first week" (that's the
+  two-week total) or "575,000" (unsourced). This one is now landed correctly in the docs.
 
 ### C8. Macro impact stats  — CONFIRMED (with date caveats)
 - **$2.41T tech debt — CONFIRMED.** CISQ/Synopsys "Cost of Poor Software Quality in the
@@ -427,10 +431,19 @@ investor are in the room and will fact-check every number and every platform cla
 - **Attack:** if the real minimum differs, `pip install -r requirements.txt` could pull a
   version missing `client.interactions` / `client.agents`, and nothing runs. The number
   reads precise but I have not seen it in a primary source.
-- **Verdict: RESOLVED — the catch was correct.** The `1.55.0` floor was wrong (that's the
-  model-interactions path). researcher docs confirm the managed-agents path needs
-  `google-genai >= 2.0.0` (cookbook). The repo is already bumped: `requirements.txt`
-  `>=2.6.0,<3.0.0`, `agent.py` `>=2.6.0`, README/ARCHITECTURE `>=2.0.0`. No further action.
+- **Verdict: RESOLVED for the install; NEEDS FIX for 3 stale doc references.** The catch was
+  correct AND the true floor is higher than I first recorded. Per the official SDK CHANGELOG
+  (researcher-agents, verbatim): interactions debuted in 1.55.0; the `step.*` /
+  `interaction.completed` SSE schema is 2.0.0 (BREAKING rename); `interaction.output_text` is
+  2.3.0; and **`client.agents` (Agent + Environment APIs) ships in 2.4.0 (2026-05-17)**. So the
+  EXACT minimum for THIS project (we use `client.agents` + environment sources + the step.* SSE
+  schema) is **`google-genai >= 2.4.0`** — NOT 2.0.0 (which lacks `client.agents`).
+  - **Install is FINE:** `requirements.txt` pins `>=2.6.0,<3.0.0` and `agent.py` `>=2.6.0` —
+    both already satisfy `>=2.4.0`. Nothing breaks.
+  - **NEEDS FIX (doc accuracy):** three places still state the wrong minimum "**>= 2.0.0**" —
+    README L51, ARCHITECTURE L77, requirements.txt L8 (comment). 2.0.0 predates `client.agents`
+    by two minors; a judge checking the changelog catches it. Change those three "2.0.0" → "2.4.0"
+    (or just say "2.6.0 pinned"). doc-keeper/backend-eng lane.
 
 ### C16. Demo UI claims "hot-reloading agent" mid-interaction  — NEEDS FIX (NOT LANDED in web/)
 - **Claim:** the web/ demo surface says the agent **hot-reloads** the skill it just authored,
