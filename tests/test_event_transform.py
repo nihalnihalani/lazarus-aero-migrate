@@ -113,3 +113,71 @@ def test_business_rules_from_marker_lines():
 
 def test_business_rules_empty_when_absent():
     assert et.business_rules_from_text("no rules emitted") == []
+
+
+# --------------------------------------------------------------------------
+# business_rules_fallback — deterministic >=3 rules when markers are absent
+# --------------------------------------------------------------------------
+def test_business_rules_fallback_has_at_least_three_typed_rules():
+    rules = et.business_rules_fallback()
+    assert len(rules) >= 3
+    assert all(r["type"] == "business_rule" for r in rules)
+    assert all(r.get("title") and r.get("plain") and r.get("cobol_ref") for r in rules)
+    # the rounding gotcha (the demo's whole point) must be present
+    assert any(r["severity"] == "gotcha" for r in rules)
+    assert any("half-up" in r["plain"].lower() or "ROUND_HALF_UP" in r["cobol_ref"]
+               for r in rules)
+
+
+def test_business_rules_fallback_returns_independent_copies():
+    a = et.business_rules_fallback()
+    a[0]["title"] = "mutated"
+    assert et.business_rules_fallback()[0]["title"] != "mutated"
+
+
+# --------------------------------------------------------------------------
+# phase_for_text — progressive-phase milestone detection
+# --------------------------------------------------------------------------
+def test_phase_for_text_maps_milestones():
+    assert et.phase_for_text("Reading the COBOL source, provisioning sandbox") == "ingest"
+    assert et.phase_for_text("Recovering the business rules in plain English") == "recover"
+    assert et.phase_for_text("Writing payroll.py now") == "translate"
+    assert et.phase_for_text("Compiling with cobc / micromamba gnucobol") == "oracle"
+    assert et.phase_for_text("Running pytest: 10 passed") == "test"
+    assert et.phase_for_text(".agents/skills/foo/SKILL.md written") == "forge"
+
+
+def test_phase_for_text_none_on_plain_chatter():
+    assert et.phase_for_text("hmm let me think about this") is None
+
+
+# --------------------------------------------------------------------------
+# diff_event — COBOL<->Python side-by-side from real sources
+# --------------------------------------------------------------------------
+def test_diff_event_carries_both_sides():
+    ev = et.diff_event("IDENTIFICATION DIVISION.", "print('hi')",
+                       cobol_name="payroll.cob", python_name="payroll.py")
+    assert ev["type"] == "diff"
+    assert ev["left"] == {"lang": "cobol", "name": "payroll.cob",
+                          "code": "IDENTIFICATION DIVISION."}
+    assert ev["right"] == {"lang": "python", "name": "payroll.py",
+                           "code": "print('hi')"}
+
+
+# --------------------------------------------------------------------------
+# oracle_harness_pytest_event — truthful labeling of the orchestrator's run
+# --------------------------------------------------------------------------
+def test_oracle_harness_pytest_event_labels_source_and_cases():
+    records = [
+        {"input": "1.00\n", "cobol": "0000000.77\n", "python": "0000000.78\n", "match": False},
+        {"input": "1000.00\n", "cobol": "0000775.00\n", "python": "0000775.00\n", "match": True},
+    ]
+    ev = et.oracle_harness_pytest_event(records, iteration=1)
+    assert ev["type"] == "pytest"
+    assert ev["source"] == "differential_oracle"          # not the agent's own pytest
+    assert ev["result"] == "red"
+    assert all(c["name"].startswith("oracle_equivalence[") for c in ev["cases"])
+    assert "differential oracle" in ev["summary"]
+    # the per-case bytes survive (the diff is still real)
+    fail = next(c for c in ev["cases"] if c["status"] == "fail")
+    assert fail["cobol"] == "0000000.77\n" and fail["python"] == "0000000.78\n"
