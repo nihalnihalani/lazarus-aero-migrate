@@ -51,6 +51,7 @@ b { color: var(--text); font-weight: 600; }
 
 /* ── top bar ──────────────────────────────────────────────────── */
 .topbar {
+  position: relative; z-index: 10000; /* keep the wordmark crisp above the CRT overlays */
   flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between;
   gap: 14px; padding: 15px clamp(18px, 4vw, 48px); border-bottom: 1px solid var(--line);
 }
