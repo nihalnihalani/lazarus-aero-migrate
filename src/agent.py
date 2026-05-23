@@ -149,17 +149,55 @@ def build_base_environment() -> dict:
     return {"type": "remote", "sources": sources}
 
 
-def ensure_agent(client: genai.Client) -> None:
-    """Create the reusable custom agent once (mounts skills via base_environment).
+# Where we remember which mounted skill set the registered agent was built from, so a
+# FRESH invocation can re-register when the on-disk skill library has changed (Feature 3:
+# cross-run skill accumulation). The registry doesn't report an agent's mounted skills, so
+# we track the fingerprint locally. Lives under .agents/ (gitignored line in .gitkeep dir
+# is fine) — it's a cache, not source of truth.
+_SKILL_FINGERPRINT_FILE = AGENTS_DIR / ".skill_fingerprint"
 
-    Idempotent: skips creation if an agent with AGENT_ID already exists.
+
+def _mounted_skill_fingerprint() -> str:
+    """A stable hash of the skill set build_base_environment() will mount RIGHT NOW.
+
+    Covers each skill's discovery target AND its content (so editing a forged SKILL.md
+    re-registers too), plus AGENTS.md. Sorted for determinism. Used to decide whether a
+    pre-existing agent must be re-registered to pick up newly-forged/changed skills.
     """
+    import hashlib
+    h = hashlib.sha256()
     try:
-        existing = {a.id for a in client.agents.list().agents}
-    except Exception:
-        existing = set()
-    if AGENT_ID in existing:
-        return
+        h.update(b"AGENTS.md\0")
+        h.update((AGENTS_DIR / "AGENTS.md").read_bytes())
+        h.update(b"\0")
+    except OSError:
+        pass
+    for skill_md in sorted((AGENTS_DIR / "skills").glob("*/SKILL.md")):
+        h.update(f"{skill_md.parent.name}\0".encode())
+        try:
+            h.update(skill_md.read_bytes())
+        except OSError:
+            pass
+        h.update(b"\0")
+    return h.hexdigest()
+
+
+def _read_registered_fingerprint() -> str | None:
+    try:
+        return _SKILL_FINGERPRINT_FILE.read_text().strip() or None
+    except OSError:
+        return None
+
+
+def _write_registered_fingerprint(fp: str) -> None:
+    try:
+        _SKILL_FINGERPRINT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _SKILL_FINGERPRINT_FILE.write_text(fp)
+    except OSError:
+        pass  # best-effort cache; a miss just means we may re-register next run
+
+
+def _create_lazarus_agent(client: genai.Client) -> None:
     client.agents.create(
         id=AGENT_ID,
         base_agent=BASE_AGENT,
@@ -168,6 +206,46 @@ def ensure_agent(client: genai.Client) -> None:
         base_environment=build_base_environment(),
         # tools omitted -> defaults to code_execution + google_search + url_context.
     )
+
+
+def ensure_agent(client: genai.Client) -> None:
+    """Create the reusable custom agent, mounting EVERY .agents/skills/*/SKILL.md into
+    base_environment so a FRESH invocation starts with the accumulated skill library
+    (Feature 3: cross-run skills). Clean-fork stays the default when no skills exist.
+
+    Re-registration on skill change: build_base_environment() already mounts whatever
+    skills are on disk, but a PRE-EXISTING agent was registered with an OLDER skill set
+    and the registry won't tell us which. So we track the mounted-skill fingerprint
+    locally; if the agent exists but the on-disk skill set has CHANGED (a skill was forged
+    or edited since it was registered), we delete + recreate it so the new skill is mounted.
+    When the fingerprint matches, this stays a no-op (idempotent — unchanged behavior).
+    """
+    try:
+        existing = {a.id for a in client.agents.list().agents}
+    except Exception:
+        existing = set()
+
+    current_fp = _mounted_skill_fingerprint()
+    has_forged_skills = any((AGENTS_DIR / "skills").glob("*/SKILL.md"))
+
+    if AGENT_ID in existing:
+        recorded = _read_registered_fingerprint()
+        # Idempotent (unchanged behavior) when nothing skill-related has changed:
+        #   * no forged skills on disk AND no recorded fingerprint -> the shipped clean-fork
+        #     world (the agent has no accumulated skills to miss), OR
+        #   * the recorded fingerprint already matches the current skill set.
+        # Only re-register when forged skills exist whose fingerprint differs from what the
+        # agent was registered with -> a NEW/CHANGED skill the running agent wouldn't have.
+        if recorded == current_fp or (recorded is None and not has_forged_skills):
+            return
+        # Skill set changed since the agent was registered -> re-register to mount it.
+        try:
+            client.agents.delete(id=AGENT_ID)
+        except Exception:
+            pass  # if delete is unavailable, create() below may still upsert; best-effort
+
+    _create_lazarus_agent(client)
+    _write_registered_fingerprint(current_fp)
 
 
 # Opt-in research preamble (Feature 1). Prepended ONLY when grounding is enabled, so
@@ -454,6 +532,47 @@ def _forged_skill_path(output_text: str) -> str | None:
     return m.group(1) if m else None
 
 
+# A forged skill's body, if the agent echoed it in a fenced block right after announcing the
+# path (so we can BANK it locally). Tolerant: matches ```...``` (any/no language tag).
+_SKILL_BODY_RE = re.compile(r"```[a-zA-Z]*\n(.*?)```", re.S)
+
+
+def _persist_forged_skill(name: str, content: str) -> pathlib.Path | None:
+    """Bank a forged SKILL.md into the repo at .agents/skills/<name>/SKILL.md (Feature 3).
+
+    This is what turns a session-scoped forge into a CROSS-RUN skill: once on disk here,
+    ensure_agent() mounts it into base_environment on the next FRESH invocation (and the
+    changed fingerprint triggers a re-register). `name` is sanitized to a safe dir slug.
+    Returns the written path, or None on a bad name / write error (best-effort — banking a
+    skill must never crash a migration).
+    """
+    slug = re.sub(r"[^\w\-]+", "-", (name or "").strip().lower()).strip("-")
+    if not slug or not (content or "").strip():
+        return None
+    try:
+        dest = AGENTS_DIR / "skills" / slug / "SKILL.md"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(content)
+        return dest
+    except OSError:
+        return None
+
+
+def _bank_forged_skill_from_output(skill_path: str, output_text: str) -> pathlib.Path | None:
+    """If the agent echoed the forged SKILL.md body in `output_text`, bank it locally.
+
+    `skill_path` is the announced path (…/skills/<name>/SKILL.md); we derive <name> from it
+    and pull the skill body from the first fenced block following the path mention. No body
+    found -> None (we never invent skill content). Best-effort; cross-run banking is a bonus.
+    """
+    name = pathlib.PurePosixPath(skill_path).parent.name
+    tail = output_text[output_text.find(skill_path) + len(skill_path):]
+    m = _SKILL_BODY_RE.search(tail)
+    if not m:
+        return None
+    return _persist_forged_skill(name, m.group(1).rstrip("\n") + "\n")
+
+
 def _looks_like_thinking_rejection(exc: Exception) -> bool:
     """Heuristic: did this error come from sending generation_config/thinking_config?
 
@@ -629,6 +748,11 @@ def migrate(client: genai.Client, cobol_path: str):
         if not _pending_skill_path:
             # Failed but no new skill was forged -> nothing new to re-read; stop early.
             break
+        # CROSS-RUN banking (Feature 3): if the agent echoed the forged SKILL.md body, write
+        # it into this repo's .agents/skills/ so a FUTURE fresh invocation inherits it (via
+        # ensure_agent mounting it + the changed fingerprint re-registering the agent). The
+        # SAME-environment re-read below is unchanged; banking is an ADDITIONAL durable copy.
+        _bank_forged_skill_from_output(_pending_skill_path, output)
 
     return interaction
 
