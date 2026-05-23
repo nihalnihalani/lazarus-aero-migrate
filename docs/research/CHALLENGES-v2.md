@@ -1414,3 +1414,32 @@ rule TEXT (PAYMAIN→TAXSUB) — qa re-running in foreground (the bg runs got re
 verdict; these receipts upgrade #1/#3 from strong-indication to SEEN and confirm L26. (d) will finalize the #4
 rule-text receipt but #4's verdict (rule-recovery verified, not oracle-byte-verified) already stands. Nothing in my
 gate is open. **DEVIL'S-ADVOCATE REVIEW REMAINS CLOSED; receipts are confirming, not reopening.**
+
+## #4 cross-module rule TEXT — SEEN (receipt d). ALL 4 #9 RECEIPTS NOW SEEN + version-stamped.
+qa pasted the raw recovered rule from the 2-file PAYMAIN→TAXSUB system (.venv/2.6.0, read off the STREAM). RULE 1
+"Cross-Module Tax Calculation Delegation" has `cobol_ref: PAYMAIN.COB: CALL 'TAXSUB' USING WS-GROSS WS-TAX. and
+TAXSUB.COB: PROCEDURE DIVISION USING LK-GROSS LK-TAX.` — ONE rule citing BOTH files; the CALL relationship + the
+rate-defined-only-in-the-subprogram fact (RULE 2: WS-TAX-RATE 0.225 in TAXSUB) are invisible from either file alone.
+Tool check: `any rule names BOTH PAYMAIN+TAXSUB = True`. Genuine cross-module recovery, NOT two concatenated
+single-file analyses — meets my L20/L23 bar. qa shipped the REQUIRED honest caveat (and the README:102 matches it):
+RECOVERY only; NO multi-module golden (golden_io.json is single-module payroll) → multi-module OUTPUT is NOT
+oracle-byte-verified; must not imply byte-verification. #4 receipt SEEN; verdict unchanged (rule-recovery verified,
+honest oracle caveat shipped).
+
+## ✅ FULL PER-FEATURE SIGN-OFF (devils-advocate, task #4) — GRANTED, all evidence SEEN on the pinned SDK
+Final verification on merged main (80f69d6): suite 154 green; flags-OFF byte-identical to PRE-FEATURE main 26f65e4
+(prompt + base_environment + forge-retry prompt all identical — verified just now); verdict/oracle/falsifiability
+core untouched; README capabilities table honest line-by-line. All four live receipts are SEEN + version-stamped
+(.venv / google-genai 2.6.0):
+- **#1 WEB-GROUNDING — VERIFIED:** 3 raw google_search_call blocks on a hard un-revealed idiom (a).
+- **#2 THINKING — ACCEPTED (HTTP 200), depth-effect INCONCLUSIVE, NO control claimed:** L28 locked (200 not 400);
+  L31 overclaim softened in code+README; THINKING_REJECTED dead-code labeled defensive; matcher hardened (L30/opt-a).
+- **#3 CROSS-RUN SKILL LIBRARY — VERIFIED END-TO-END:** discovery (ZARFLAX) + banking-on-real-forge SKILL.md on disk (c).
+- **#4 WHOLE-CODEBASE — rule-recovery VERIFIED:** cross-module PAYMAIN→TAXSUB rule (d); honest "NOT oracle-byte-
+  verified" caveat shipped; CLI entry added (L23).
+- function_call reconciliation (L26): names = internal FS ops (list/read/write_file); §3 holds.
+HONESTY POSTURE: every shipped claim rests on version-stamped evidence I've seen; the one overclaim that reached
+main (L31 "silently ignored") was caught and corrected; no capability is claimed beyond what the runtime does; the
+core "verdict tracks the oracle, not the agent" guarantee survives all four. The .venv/2.6.0-vs-system/1.73.1
+provenance discipline (L29) held throughout and resolved every conflicting finding. **No open honesty, feasibility,
+or regression issue. Merge 6504a78 is fully signed off. DEVIL'S-ADVOCATE REVIEW COMPLETE.**
