@@ -70,7 +70,7 @@ LAZARUS is a **single autonomous agent** (no fragile multi-agent orchestration) 
 1. **Reads** the whole module in one shot — Gemini 3.5 Flash's **1M-token context** scales the *same* loop from the demo slice to a **50k-line** program without chunking.
 2. **Recovers the lost business logic** — explains, in plain English, the undocumented rules the COBOL encodes (the "archaeology" that makes this more than a transpiler).
 3. **Translates** COBOL → idiomatic Python in the sandbox.
-4. **Proves equivalence against the real compiler.** Ground truth is the **original COBOL's real GnuCOBOL output**, captured ahead of time into [`src/sample/golden_io.json`](src/sample/golden_io.json) — the **falsifiable floor**. The agent also installs GnuCOBOL in-sandbox (via micromamba / conda-forge userland, no root) and recompiles `cobc` live as an *opportunistic refresh*. Either way, equivalence is asserted **byte-for-byte**, and the verdict follows the oracle — not the agent's self-report.
+4. **Proves equivalence against the real compiler.** Ground truth is the **original COBOL's real GnuCOBOL output**, captured ahead of time into [`src/sample/golden_io.json`](src/sample/golden_io.json) — the **falsifiable floor**. The agent also installs GnuCOBOL in-sandbox (via micromamba / conda-forge userland, no root) and recompiles `cobc` live as an *opportunistic refresh*. Either way, equivalence is asserted **byte-for-byte**, and the verdict follows the oracle — not the agent's self-report. Two bundled samples exercise **opposite** COBOL idioms — `payroll.cob` (`ROUND-HALF-UP`) and `interest.cob` (`COMPUTE` without `ROUNDED` → truncation) — each proven against real GnuCOBOL, and each one breaks a naive `round()` port; evidence the loop generalizes, not pattern-matches one file. (`src/sample/build_samples.sh` re-captures both goldens from live `cobc` and verifies the committed bytes.)
 5. **Self-heals via FORGE** — on an unsupported idiom (e.g. COBOL numeric `DISPLAY` formatting + `ROUND-HALF-UP`), it authors a `SKILL.md` into its live sandbox; the next pass reuses the **same `environment_id`** and re-discovers the skill at startup, re-running until tests go **red → green**. *(Within a session the skill stays live; a fresh invocation forks the base env clean — to bank a skill permanently you re-register the agent with it mounted. We do **not** claim mid-run hot-reload or automatic cross-run accumulation.)*
 
 ### Why this wins
@@ -129,7 +129,8 @@ lazarus-aero-migrate/
 │   ├── server.py                    # FastAPI/SSE bridge → browser; phase rail
 │   ├── event_transform.py           # pure event derivations (diff, oracle, pytest…)
 │   ├── differential_oracle.py       # GnuCOBOL byte-diff harness
-│   └── sample/                      # payroll.cob, payroll.py, golden_io.json
+│   └── sample/                      # payroll.cob + interest.cob (2 idioms), refs,
+│                                    #   real golden_io.json, build_samples.sh
 ├── web/                             # live console (index.html, src/*.js, style.css)
 ├── tests/                           # 96 network-free tests
 ├── scripts/smoke_test.py           # day-of live validation
