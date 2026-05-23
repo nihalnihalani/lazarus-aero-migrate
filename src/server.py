@@ -310,10 +310,13 @@ def _run_migration(run_id: str, cobol: str, filename: str) -> None:
               **extra})
 
     def emit_step(text: str) -> None:
+        # Stream the agent's prose + tool breadcrumbs to the trace (keeps the screen alive),
+        # but DO NOT advance the phase rail from prose: qa's live capture proved the agent's
+        # prose mentions beats out of chronological order (oracle keywords during early file
+        # exploration; the business-rules summary at the very end), so a forward-only prose
+        # rail skips recover/translate/test. The rail is driven by the ordered STRUCTURED
+        # events below (recover/translate/oracle/test) instead.
         push({"type": "step", "kind": "output", "text": text})
-        phase = event_transform.phase_for_text(text)
-        if phase:
-            emit_phase(phase)
 
     def emit_iteration(c: int, t: int) -> None:
         # The enforced loop counter is orthogonal to the phase: surface `iteration` on the
@@ -338,31 +341,21 @@ def _run_migration(run_id: str, cobol: str, filename: str) -> None:
 
         output = agent_mod.extract_output_text(result)
 
-        # Recovered business rules (archaeology panel): markers if the agent emitted them,
-        # else the deterministic fallback so the panel never sits empty (>=3 real rules).
+        # The phase rail is driven by these STRUCTURED emissions IN SEMANTIC ORDER
+        # (recover→translate→oracle→test), NOT by prose keywords — the live agent's prose
+        # mentions beats out of order (oracle keywords during early file exploration; the
+        # business-rules summary at the very end), so a forward-only prose rail skips beats.
+        # The structured events the orchestrator emits ARE ordered, so we emit each phase as
+        # its event is produced, with the diff (translate) BEFORE the oracle banner — which is
+        # also the true sequence: the agent writes payroll.py, THEN the oracle compares it.
+
+        # recover: recovered business rules (markers if emitted, else the >=3-rule fallback).
+        emit_phase("recover")
         rules = event_transform.business_rules_from_text(output)
         if not rules:
             rules = event_transform.business_rules_fallback()
         for rule in rules:
             push(rule)
-
-        # Oracle banner: real compiler + the input battery (from the golden capture).
-        golden = SAMPLE_DIR / "golden_io.json"
-        if golden.exists():
-            emit_phase("oracle")
-            push(event_transform.oracle_event(str(golden)))
-
-        skill = agent_mod._forged_skill_path(output)
-        if skill:
-            emit_phase("forge")
-            push({"type": "forge", "skill": skill,
-                  "reason": "Unknown idiom: numeric DISPLAY format + ROUND-HALF-UP.",
-                  "git": {"status": "A",
-                          "additions": _forge_skill_preview(skill, output),
-                          "commit": f"forge: add {pathlib.Path(skill).parent.name} skill"}})
-            emit_phase("reload")
-            push({"type": "reload",
-                  "label": f"Re-reading {skill} in the reused environment"})
 
         # Recover the agent's actual module to drive the diff + the oracle pytest + download.
         # PRIMARY = the fenced ```python block the agent echoes in its model output. This is
@@ -380,11 +373,18 @@ def _run_migration(run_id: str, cobol: str, filename: str) -> None:
         if env_id:
             _start_background_tarball_upgrade(run, env_id)
 
-        # COBOL<->Python diff from REAL sources (submitted COBOL + the agent's payroll.py).
+        # translate: COBOL<->Python diff from REAL sources (submitted COBOL + agent payroll.py).
+        # Emitted BEFORE the oracle so the forward-only rail lights translate→oracle in order.
         if migrated is not None:
             emit_phase("translate")
             push(event_transform.diff_event(cobol, migrated,
                                             cobol_name=filename, python_name="payroll.py"))
+
+        # oracle: the differential-oracle banner (real compiler + the golden input battery).
+        golden = SAMPLE_DIR / "golden_io.json"
+        if golden.exists():
+            emit_phase("oracle")
+            push(event_transform.oracle_event(str(golden)))
 
         # STRUCTURED pytest (the money shot). Priority:
         #   1. agent's LAZARUS_ORACLE_JSON marker (the agent's own per-case oracle), else
@@ -407,6 +407,22 @@ def _run_migration(run_id: str, cobol: str, filename: str) -> None:
             push({"type": "pytest", "result": "green" if passed else "red",
                   "iteration": 1, "summary": output[-500:] or "(no test output)",
                   "cases": []})
+
+        # forge + reload: the self-authored SKILL.md beat. Emitted AFTER test so the
+        # forward-only rail stays in order (forge/reload sit after test in the rail); the
+        # narrative is write→test(RED)→forge→reload→re-test(GREEN), and these structured
+        # events report the skill the agent wrote during that loop.
+        skill = agent_mod._forged_skill_path(output)
+        if skill:
+            emit_phase("forge")
+            push({"type": "forge", "skill": skill,
+                  "reason": "Unknown idiom: numeric DISPLAY format + ROUND-HALF-UP.",
+                  "git": {"status": "A",
+                          "additions": _forge_skill_preview(skill, output),
+                          "commit": f"forge: add {pathlib.Path(skill).parent.name} skill"}})
+            emit_phase("reload")
+            push({"type": "reload",
+                  "label": f"Re-reading {skill} in the reused environment"})
 
         if migrated is not None:
             push({"type": "download", "name": "payroll.py",

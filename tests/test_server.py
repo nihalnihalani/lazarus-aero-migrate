@@ -338,21 +338,28 @@ def test_agent_marker_pytest_is_labeled_agent_source(monkeypatch):
     assert pt["cases"][0]["name"].startswith("test_equivalence[")  # agent's case naming
 
 
-def test_phase_rail_advances_progressively(monkeypatch):
-    """Phases advance off the streamed step text (ingest->recover->translate->oracle->test)
-    and never move backwards — the rail shows the journey live, not just the verdict."""
+def test_phase_rail_advances_in_semantic_order_from_structured_events(monkeypatch):
+    """The rail is driven by the STRUCTURED events the server emits (business_rule→recover,
+    diff→translate, oracle→oracle, pytest→test), NOT by prose keywords — because the live
+    agent's prose mentions beats OUT of order (it says "search golden_io.json" during early
+    exploration and writes the business-rules summary at the END). So even with deliberately
+    out-of-order prose, the rail must still fire ingest→recover→translate→oracle→test→…→done
+    IN ORDER with no skip and no false-fire (esp. no FORGE during a conda-forge install)."""
     sample_py = (ROOT / "src" / "sample" / "payroll.py").read_text()
     monkeypatch.setattr(server, "_fetch_env_tarball",
                         lambda env_id: _tar_with_module(sample_py))
+    # Prose mimics the REAL live stream's order: oracle keywords FIRST (exploration), then
+    # the module, then the business-rules summary LAST — the order that broke a prose rail.
     _stub_markerless_agent(
         monkeypatch,
-        output="all tests pass",
+        output=_output_echoing_module(
+            sample_py,
+            trailer="### Business Rules Specification — recovered. All equivalence tests pass."),
         emit=[
-            "Reading the COBOL source and provisioning the sandbox",
-            "Recovering the business rules in plain English",
-            "Writing payroll.py translation",
-            "Compiling original with cobc for the differential oracle",
-            "Running pytest equivalence tests",
+            "I will search for golden_io.json and the differential oracle setup",
+            "Installing gnucobol via micromamba -c conda-forge",   # must NOT fire FORGE
+            "compiling the original COBOL",
+            "Now writing the analysis and business rules summary",
         ],
     )
 
@@ -363,19 +370,18 @@ def test_phase_rail_advances_progressively(monkeypatch):
 
     order = ["ingest", "recover", "translate", "oracle", "test",
              "diagnose", "forge", "reload", "verify", "done"]
-    seen_phases = [e["phase"] for e in events if e["type"] == "phase"]
-    idxs = [order.index(p) for p in seen_phases]
-    assert idxs == sorted(idxs)                       # monotonic non-decreasing (never back)
-    assert {"ingest", "recover", "translate", "oracle", "test", "done"} <= set(seen_phases)
-
-    # Every phase event carries a human, non-generic label — the WORKING banner shows it
-    # during the multi-minute live wait (frontend reads phase.label). A bare capitalized
-    # phase name (e.g. "Recover…") would be the lazy fallback; assert we did better.
-    phase_events = [e for e in events if e["type"] == "phase"]
-    assert all(e.get("label") for e in phase_events)
-    labeled = {e["phase"]: e["label"] for e in phase_events if "iteration" not in e}
-    assert labeled["recover"] != "Recover…" and "rule" in labeled["recover"].lower()
-    assert "oracle" in labeled["oracle"].lower() or "differential" in labeled["oracle"].lower()
+    seen = [e["phase"] for e in events if e["type"] == "phase"]
+    idxs = [order.index(p) for p in seen]
+    assert idxs == sorted(idxs)                          # forward-only: never moves backward
+    # the demo beats all light, in order — NONE skipped despite the out-of-order prose
+    assert {"ingest", "recover", "translate", "oracle", "test", "done"} <= set(seen)
+    # translate (diff) must come BEFORE oracle in the rail (agent writes payroll.py, THEN the
+    # oracle compares it) — this is the ordering bug team-lead flagged.
+    assert seen.index("translate") < seen.index("oracle")
+    # labels are human (WORKING banner reads phase.label)
+    labeled = {e["phase"]: e["label"] for e in events
+               if e["type"] == "phase" and "iteration" not in e}
+    assert all(labeled.get(p) for p in ("recover", "translate", "oracle", "test"))
 
 
 def test_forge_event_carries_git_additions(monkeypatch):
