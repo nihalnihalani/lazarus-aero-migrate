@@ -981,6 +981,19 @@ agent tools per §3).
   silently demoing it as a product feature is not. Flagged to team-lead. This does NOT affect the
   regression gate (single-file path is byte-identical) and #4's code stays VERIFIED-as-a-function.
 
+### L23 — RESOLVED (7585a41): CLI multi-module entry added (option a). I verified:
+integration-eng took option (a): `--input nargs="+"` with `default=["src/sample/payroll.cob"]`. Routing
+verified — len==1 → `migrate(cobol_path=...)` (single-file BYTE-IDENTICAL path, incl. the no-arg default
+which parses to a 1-element list); len>1 → `migrate(cobol_paths=...)` (multi-module). Only agent.py changed;
+server.py + the web live path are deliberately UNTOUCHED (the UI demo stays single-file — the honest split
+I asked for). 146 green. So #4 now has a real product entry point (CLI). HONEST CLAIM SHAPE: "the CLI runs
+whole-codebase (`--input a.cob b.cob copybook.cpy`); the UI demo is single-file." NOTE: server.py untouched
+means the SAFETY-NET in server.py (fetch payroll.py → diff → oracle pytest) is single-module — a multi-file
+CLI run produces the entrypoint module + cross-module rules, but its oracle is only as strong as whatever
+golden it diffs (golden_io.json is payroll single-module). So a multi-MODULE equivalence CLAIM still needs a
+multi-module golden; the cross-module RULE-RECOVERY is the demonstrable part. #4 remaining live gap (qa): a
+real cross-module rule from a 2+-file CLI run.
+
 ## L24 — CORRECTION to my own L22: the current thinking shape is NOVEL vs the live-proven set → thinking is RE-OPENED (genuinely open, must re-test the EXACT current shape)
 
 - **Self-catch (the discipline I hold others to applies to me).** In L22 I leaned on memory
