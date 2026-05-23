@@ -525,3 +525,26 @@ Earlier pre-fix run 1ccbf78f had diff/download EMPTY (that empty result IS the e
 the fix). So: f9e71470 = a completed, provably-post-fix, real-key run where diff+download populated
 with the agent's real module (oracle 10/10, EQUIVALENT, ~514s). My sign-off rests on real live
 evidence, confirmed two ways. Nothing left to verify. DEVIL'S-ADVOCATE REVIEW CLOSED.
+
+---
+
+## L11 — CONFIRMED ALIVE in-browser (qa direct observation) + honest Phase-2 nuance recorded
+
+qa drove a live run in Chrome and observed directly (not inferred): the heartbeat elapsed timer
+ticked 0:04 → 0:45 → 0:56 across screenshots; the reassurance line rendered during the silent
+stretch; the activity panel populated with real COBOL source; screen visibly alive from ~4s. Backend
+cadence on the in-flight run: new `✓ ok` breadcrumb lines streamed at 11/13/21/27/32/39/44/53/55/57/
+65/89s — the trace accrues, not stuck on one line. This is the in-browser confirmation behind my
+heartbeat sign-off (I'd verified the timer mechanism on :8141/:8777; qa confirms it in a real run).
+
+HONEST NUANCE (qa-disclosed, recorded so it's not a surprise to a judge):
+- There is one ~30–60s FLAT stretch on a heavy compute step with no new trace line — but the
+  heartbeat keeps ticking + the reassurance line is up, so it reads "working," not "dead." This is
+  exactly why the heartbeat (not breadcrumbs) was the load-bearing L11 fix.
+- The phase rail does NOT richly march beat-by-beat live — most beats light near the END (it
+  advances off end-block prose). The streamed breadcrumbs are only `✓ ok` with NO command text, so
+  they can't drive `phase_for_text`. This is the precise Phase-2 limitation (consistent with my L10
+  shipping-run note that the rail over-emits oracle / skips recover/translate/test). A Phase-2 fix
+  would forward `code_execution_call` command text as breadcrumbs so the rail marches live.
+NET: a strictly-live judge sees a live, ticking, accruing screen — not frozen. Phase-1 L11 bar
+(never looks hung) is MET in-browser. Richer beat-by-beat progression is Phase-2, not a blocker.
