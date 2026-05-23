@@ -486,3 +486,19 @@ Honesty posture is STRONG and was made stronger by this review (C13/C16 held; or
 enforced + tested; L13 overclaim caught + fixed pre-push). Phase-2 items (breadcrumbs/phase-rail
 dedup, L12 download-endpoint TTL) are correctly deferred and are NOT blockers. team-lead is clear to
 push main (HEAD 687ca26, 88/88 green).
+
+---
+
+## L9 — STRENGTHENED post-sign-off (ea6fe12 LAZARUS_MODULE marker) — verified, no reopen
+
+After my Phase-1 sign-off, qa noted (and I verified in code) that ea6fe12 "Make module recovery
+tarball-independent" added the explicit `LAZARUS_MODULE:` belt-and-suspenders I'd recommended:
+- agent.py:168 instructs the agent to print `LAZARUS_MODULE:` + a single fenced ```python block;
+- event_transform.py: `_MODULE_MARKER = "LAZARUS_MODULE:"`; `python_module_from_output` now resolves
+  DETERMINISTICALLY (the marker) first, then falls back to the largest fenced block.
+So module recovery for diff/download no longer depends on incidental echo. qa empirically confirmed
+(live run f9e71470, /tmp/sse_full4.jsonl, which I independently read) the live agent echoes a
+complete runnable module that passes the oracle 10/10. L9 is solid on BOTH the deterministic-marker
+and scrape-fallback paths. No reopen — this only strengthens the resolution I signed off. L12
+(download-404 post-stream) → Phase-2 fix 8f1e7ea (_COMPLETED_DOWNLOADS LRU), qa to confirm on the
+Phase-2 run; correctly deferred, not a Phase-1 blocker. Sign-off stands.
