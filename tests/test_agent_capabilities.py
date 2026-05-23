@@ -115,6 +115,7 @@ class FakeInteractions:
 class FakeAgents:
     def __init__(self, existing=()):
         self.created = []
+        self.deleted = []
         self._existing = list(existing)
 
     def list(self):
@@ -124,6 +125,11 @@ class FakeAgents:
     def create(self, **kwargs):
         self.created.append(kwargs)
         self._existing.append(kwargs.get("id"))
+
+    def delete(self, *, id):
+        self.deleted.append(id)
+        if id in self._existing:
+            self._existing.remove(id)
 
 
 class FakeClient:
@@ -264,17 +270,67 @@ def test_grounding_on_does_not_drop_legacy_prompt_body(agent_mod):
     assert f"```cobol\n{cobol}\n```" in prompt
 
 
+def test_grounding_env_flag_default_off(agent_mod):
+    """_grounding_enabled() is the env reader: default OFF; only 1/true/yes/on flip it on."""
+    import os
+    if not hasattr(agent_mod, "_grounding_enabled"):
+        pytest.skip("agent._grounding_enabled not present")
+    # autouse fixture cleared LAZARUS_GROUND -> default off
+    assert agent_mod._grounding_enabled() is False
+    for on in ("1", "true", "TRUE", "yes", "on"):
+        os.environ["LAZARUS_GROUND"] = on
+        assert agent_mod._grounding_enabled() is True, on
+    for off in ("0", "false", "no", "off", "", "maybe"):
+        os.environ["LAZARUS_GROUND"] = off
+        assert agent_mod._grounding_enabled() is False, off
+    os.environ.pop("LAZARUS_GROUND", None)
+
+
+def test_grounding_breadcrumbs_from_search_and_url_steps(agent_mod):
+    """The grounding capability is PROVABLE in the live trace: google_search_call /
+    url_context_call (+ their results) yield breadcrumbs. These only appear when grounding
+    is exercised, so they're the stream-side evidence the devil's-advocate can point to."""
+    search_call = types.SimpleNamespace(
+        type="google_search_call",
+        arguments=types.SimpleNamespace(query="COBOL ROUNDED rounding mode"))
+    assert agent_mod._tool_breadcrumb(search_call) == "🔎 COBOL ROUNDED rounding mode"
+
+    search_res = types.SimpleNamespace(type="google_search_result", result="3 results found")
+    assert agent_mod._tool_breadcrumb(search_res).startswith("🔎 ✓")
+
+    url_call = types.SimpleNamespace(
+        type="url_context_call",
+        arguments=types.SimpleNamespace(url="https://gnucobol.sourceforge.io/"))
+    assert agent_mod._tool_breadcrumb(url_call) == "🌐 https://gnucobol.sourceforge.io/"
+
+    url_res = types.SimpleNamespace(type="url_context_result", result="GnuCOBOL Manual")
+    assert agent_mod._tool_breadcrumb(url_res).startswith("🌐 ✓")
+
+
+def test_grounding_breadcrumbs_tolerate_dict_and_flat_shapes(agent_mod):
+    """Defensive: the SDK may surface a raw-dict step or a flat field — breadcrumbs still
+    recover the query/url (never raise)."""
+    # dict step with nested arguments
+    assert agent_mod._tool_breadcrumb(
+        {"type": "google_search_call", "arguments": {"query": "PIC 9V99 de-editing"}}
+    ) == "🔎 PIC 9V99 de-editing"
+    # flat field directly on the step
+    assert agent_mod._tool_breadcrumb(
+        types.SimpleNamespace(type="url_context_call", url="https://example.com/cobol")
+    ) == "🌐 https://example.com/cobol"
+
+
 # ==========================================================================
 # 2. THINKING_LEVEL  (task #6, env LAZARUS_THINKING default "medium")
 # ==========================================================================
 # Landed contract (agent._thinking_level + _create_interaction_stream):
-#   * env LAZARUS_THINKING. UNSET (or "off"/"none"/"default") => _thinking_level() is None
-#     => interactions.create gets NO generation_config (byte-identical to the shipped call).
-#   * an explicit level in {minimal,low,medium,high} => OPT-IN: the create() call carries
-#     generation_config = {"thinking_config": {"thinking_level": <level>}}. Explicit
-#     "medium" deliberately ALSO sends (it proves the knob round-trips), so the byte-identical
-#     baseline is the UNSET env, not the string "medium".
-#   * an unrecognized value => None (no-op, never an error).
+#   * env LAZARUS_THINKING. _THINKING_LEVELS = {minimal, low, high} — note "medium" is
+#     DELIBERATELY EXCLUDED: it IS the runtime default, so sending it would needlessly break
+#     the byte-identical guarantee. UNSET / "medium" / "off" / "none" / "default" / any
+#     unrecognized value => _thinking_level() is None => create() gets NO generation_config
+#     (byte-identical to the shipped call).
+#   * an explicit level that genuinely DIFFERS from the default (minimal|low|high) => OPT-IN:
+#     the create() call carries generation_config = {"thinking_config": {"thinking_level": <lvl>}}.
 #   * if the managed-agent runtime rejects the thinking-bearing call, the impl sets
 #     THINKING_REJECTED and retries WITHOUT generation_config so the run still completes.
 def _gen_config_from_call(call):
@@ -301,11 +357,13 @@ def test_thinking_unset_sends_no_generation_config(agent_mod, tmp_path):
             "unset LAZARUS_THINKING must not emit a generation_config (identical to today)"
 
 
-@pytest.mark.parametrize("sentinel", ["off", "none", "default", "bogus-level", ""])
+@pytest.mark.parametrize("sentinel", ["medium", "off", "none", "default", "bogus-level", ""])
 def test_thinking_sentinel_values_send_no_generation_config(agent_mod, tmp_path,
                                                             monkeypatch, sentinel):
-    """off/none/default (and any unrecognized value, and empty) all mean 'send nothing' —
-    an explicit, safe way to force the shipped default with no generation_config."""
+    """medium (==runtime default), off/none/default, any unrecognized value, and empty all
+    mean 'send nothing' — they keep the call byte-identical to today (no generation_config).
+    Including "medium" here is the load-bearing case: opting into the default must NOT break
+    the byte-identical guarantee."""
     monkeypatch.setenv("LAZARUS_THINKING", sentinel)
     cobol = _write_cobol(tmp_path)
     client = _green_client()
@@ -315,11 +373,11 @@ def test_thinking_sentinel_values_send_no_generation_config(agent_mod, tmp_path,
             f"LAZARUS_THINKING={sentinel!r} must be a no-op (no generation_config)"
 
 
-@pytest.mark.parametrize("level", ["minimal", "low", "medium", "high"])
+@pytest.mark.parametrize("level", ["minimal", "low", "high"])
 def test_thinking_explicit_level_carries_exact_shape(agent_mod, tmp_path, monkeypatch, level):
-    """An explicit level opts in and reaches the SDK as the EXACT documented shape:
-    generation_config = {"thinking_config": {"thinking_level": <level>}}.
-    Explicit "medium" sends too (the round-trip proof), unlike the UNSET default."""
+    """A non-default level (minimal|low|high) opts in and reaches the SDK as the EXACT
+    documented shape: generation_config = {"thinking_config": {"thinking_level": <level>}}.
+    ("medium" is excluded — it equals the runtime default and stays a no-op.)"""
     monkeypatch.setenv("LAZARUS_THINKING", level)
     cobol = _write_cobol(tmp_path)
     client = _green_client()
@@ -413,12 +471,63 @@ def test_thinking_never_sends_sampling_params(agent_mod, tmp_path, monkeypatch):
         _scan(call)
 
 
+def test_thought_breadcrumb_from_thought_step(agent_mod):
+    """A `thought` step yields a 💭 breadcrumb (the thinking summary), proving deep-think ran.
+    Verified §8 shape: thought -> {summary:[{type:'text', text}]}."""
+    step = types.SimpleNamespace(
+        type="thought",
+        summary=[types.SimpleNamespace(type="text", text="Considering ROUND_HALF_UP vs banker's")])
+    crumb = agent_mod._tool_breadcrumb(step)
+    assert crumb is not None
+    assert crumb.startswith("💭")
+    assert "ROUND_HALF_UP" in crumb
+
+
+def test_thought_tokens_read_from_usage(agent_mod):
+    """usage.total_thought_tokens is read best-effort (attr OR dict) — a positive value
+    PROVES thinking ran; a missing field returns None (never raises)."""
+    if not hasattr(agent_mod, "_thought_tokens"):
+        pytest.skip("agent._thought_tokens not present")
+    attr_itx = types.SimpleNamespace(usage=types.SimpleNamespace(total_thought_tokens=512))
+    assert agent_mod._thought_tokens(attr_itx) == 512
+    dict_itx = types.SimpleNamespace(usage={"total_thought_tokens": 7})
+    assert agent_mod._thought_tokens(dict_itx) == 7
+    # absent / zero / garbage -> None
+    assert agent_mod._thought_tokens(types.SimpleNamespace(usage=None)) is None
+    assert agent_mod._thought_tokens(types.SimpleNamespace()) is None
+    assert agent_mod._thought_tokens(
+        types.SimpleNamespace(usage=types.SimpleNamespace(total_thought_tokens=0))) is None
+
+
 # ==========================================================================
 # 3. CROSS-RUN SKILL LIBRARY  (task #7)
 # ==========================================================================
-# Contract: ensure_agent()/build_base_environment() mount EVERY
-# .agents/skills/*/SKILL.md into base_environment.sources, so a fresh invocation
-# starts with the accumulated skill set. Clean fork stays the default when none exist.
+# Landed contract:
+#   * build_base_environment() mounts EVERY .agents/skills/*/SKILL.md into
+#     base_environment.sources, so a FRESH invocation starts with the accumulated skill
+#     set. Clean-fork (only AGENTS.md) stays the default when no skills exist.
+#   * ensure_agent() re-registers (delete + recreate) a PRE-EXISTING agent when the
+#     mounted-skill FINGERPRINT changes (a skill forged or edited since registration),
+#     tracked locally in AGENTS_DIR/.skill_fingerprint. Matching fingerprint => no-op.
+def _point_agents_dir(agent_mod, monkeypatch, agents_dir):
+    """Redirect BOTH AGENTS_DIR and the derived fingerprint cache path at a temp tree,
+    so ensure_agent's fingerprint file lands in the temp dir (not the real repo)."""
+    monkeypatch.setattr(agent_mod, "AGENTS_DIR", agents_dir)
+    monkeypatch.setattr(agent_mod, "_SKILL_FINGERPRINT_FILE",
+                        agents_dir / ".skill_fingerprint")
+
+
+def _make_agents_tree(tmp_path, skills):
+    agents_dir = tmp_path / ".agents"
+    (agents_dir / "skills").mkdir(parents=True)
+    (agents_dir / "AGENTS.md").write_text("# LAZARUS AGENTS\n")
+    for name, body in skills.items():
+        d = agents_dir / "skills" / name
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "SKILL.md").write_text(body)
+    return agents_dir
+
+
 def test_base_environment_mounts_every_skill_md(agent_mod, tmp_path, monkeypatch):
     """build_base_environment globs ALL skills dirs into sources at the discovery path.
 
@@ -455,32 +564,78 @@ def test_base_environment_clean_fork_when_no_skills(agent_mod, tmp_path, monkeyp
 
 def test_ensure_agent_mounts_skills_into_base_environment(agent_mod, tmp_path, monkeypatch):
     """ensure_agent() creates the agent with base_environment carrying the skill mounts,
-    so a FRESH invocation inherits accumulated skills (the cross-run library)."""
-    agents_dir = tmp_path / ".agents"
-    (agents_dir / "skills" / "gamma-idiom").mkdir(parents=True)
-    (agents_dir / "AGENTS.md").write_text("# LAZARUS AGENTS\n")
-    (agents_dir / "skills" / "gamma-idiom" / "SKILL.md").write_text("GAMMA SKILL")
-    monkeypatch.setattr(agent_mod, "AGENTS_DIR", agents_dir)
+    so a FRESH invocation inherits accumulated skills (the cross-run library). It also
+    records the mounted-skill fingerprint so a later unchanged run is a no-op."""
+    agents_dir = _make_agents_tree(tmp_path, {"gamma-idiom": "GAMMA SKILL"})
+    _point_agents_dir(agent_mod, monkeypatch, agents_dir)
 
     client = FakeClient(existing_agents=[])     # agent does not exist yet -> create()
     agent_mod.ensure_agent(client)
 
     assert len(client.agents.created) == 1
     created = client.agents.created[0]
-    sources = created["base_environment"]["sources"]
-    targets = [s["target"] for s in sources]
+    targets = [s["target"] for s in created["base_environment"]["sources"]]
     assert ".agents/skills/gamma-idiom/SKILL.md" in targets
+    # the fingerprint cache was written (so the next unchanged ensure_agent is a no-op)
+    assert (agents_dir / ".skill_fingerprint").exists()
 
 
-def test_ensure_agent_idempotent_when_agent_exists(agent_mod):
-    """Idempotency baseline (unchanged): if the agent already exists, no re-create.
+def test_ensure_agent_idempotent_when_skill_set_unchanged(agent_mod, tmp_path, monkeypatch):
+    """If the agent exists AND the mounted-skill fingerprint matches what it was registered
+    with, ensure_agent is a no-op (no re-create, no delete) — unchanged steady-state behavior.
+    Proven by running ensure_agent twice: the 2nd run must not touch the registry."""
+    agents_dir = _make_agents_tree(tmp_path, {"gamma-idiom": "GAMMA SKILL"})
+    _point_agents_dir(agent_mod, monkeypatch, agents_dir)
 
-    NOTE: task #7 wants re-registration when the MOUNTED SKILL SET CHANGES. Once
-    integration-eng lands that, this test documents the OLD behavior and should be
-    superseded by a 'recreate-on-skill-change' test (left as a marker below)."""
-    client = FakeClient(existing_agents=[agent_mod.AGENT_ID])
+    client = FakeClient(existing_agents=[])
+    agent_mod.ensure_agent(client)              # 1st: create + write fingerprint
+    assert len(client.agents.created) == 1
+    agent_mod.ensure_agent(client)             # 2nd: same skill set -> no-op
+    assert len(client.agents.created) == 1     # still just the one create
+    assert client.agents.deleted == []         # never re-registered
+
+
+def test_ensure_agent_reregisters_when_skill_set_changes(agent_mod, tmp_path, monkeypatch):
+    """Feature 3 core: when a skill is FORGED/EDITED after the agent was registered, the
+    fingerprint changes and ensure_agent deletes + recreates the agent so the new skill is
+    mounted into a fresh invocation's base_environment."""
+    agents_dir = _make_agents_tree(tmp_path, {"gamma-idiom": "GAMMA SKILL"})
+    _point_agents_dir(agent_mod, monkeypatch, agents_dir)
+
+    client = FakeClient(existing_agents=[])
+    agent_mod.ensure_agent(client)             # register with {gamma}
+    assert len(client.agents.created) == 1
+
+    # forge a NEW skill on disk -> fingerprint changes
+    new = agents_dir / "skills" / "delta-idiom"
+    new.mkdir(parents=True)
+    (new / "SKILL.md").write_text("DELTA SKILL")
+
+    agent_mod.ensure_agent(client)             # must re-register to mount delta
+    assert client.agents.deleted == [agent_mod.AGENT_ID]   # old registration removed
+    assert len(client.agents.created) == 2                 # recreated
+    targets = [s["target"] for s in client.agents.created[1]["base_environment"]["sources"]]
+    assert ".agents/skills/gamma-idiom/SKILL.md" in targets
+    assert ".agents/skills/delta-idiom/SKILL.md" in targets  # the newly-forged skill
+
+
+def test_ensure_agent_reregisters_when_skill_content_edited(agent_mod, tmp_path, monkeypatch):
+    """The fingerprint covers skill CONTENT too: editing an existing SKILL.md (same name)
+    must also re-register, so a corrected skill propagates to fresh invocations."""
+    agents_dir = _make_agents_tree(tmp_path, {"gamma-idiom": "GAMMA v1"})
+    _point_agents_dir(agent_mod, monkeypatch, agents_dir)
+
+    client = FakeClient(existing_agents=[])
     agent_mod.ensure_agent(client)
-    assert client.agents.created == []
+    assert len(client.agents.created) == 1
+
+    (agents_dir / "skills" / "gamma-idiom" / "SKILL.md").write_text("GAMMA v2 (corrected)")
+    agent_mod.ensure_agent(client)
+    assert client.agents.deleted == [agent_mod.AGENT_ID]
+    assert len(client.agents.created) == 2
+    content = client.agents.created[1]["base_environment"]["sources"]
+    gamma = next(s for s in content if s["target"].endswith("gamma-idiom/SKILL.md"))
+    assert gamma["content"] == "GAMMA v2 (corrected)"
 
 
 # ==========================================================================
