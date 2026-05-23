@@ -356,6 +356,15 @@ def test_phase_rail_advances_progressively(monkeypatch):
     assert idxs == sorted(idxs)                       # monotonic non-decreasing (never back)
     assert {"ingest", "recover", "translate", "oracle", "test", "done"} <= set(seen_phases)
 
+    # Every phase event carries a human, non-generic label — the WORKING banner shows it
+    # during the multi-minute live wait (frontend reads phase.label). A bare capitalized
+    # phase name (e.g. "Recover…") would be the lazy fallback; assert we did better.
+    phase_events = [e for e in events if e["type"] == "phase"]
+    assert all(e.get("label") for e in phase_events)
+    labeled = {e["phase"]: e["label"] for e in phase_events if "iteration" not in e}
+    assert labeled["recover"] != "Recover…" and "rule" in labeled["recover"].lower()
+    assert "oracle" in labeled["oracle"].lower() or "differential" in labeled["oracle"].lower()
+
 
 def test_forge_event_carries_git_additions(monkeypatch):
     """When the agent forges a skill, the forge event carries git.additions so the
