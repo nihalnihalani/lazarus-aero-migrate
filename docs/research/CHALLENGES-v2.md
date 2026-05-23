@@ -383,5 +383,37 @@ live-only risks: L2 (real download), L8 (agent honors the pinned path), L6 (2-mi
 weakest moment).
 
 Honesty posture is STRONG: C13/C16 landed; oracle framing truthful and provenance-labeled; the
-verdict provably follows the oracle, not the agent's claim; tests honestly scoped. The remaining
-risk is purely whether the LIVE agent behaves as the (now-correct) orchestrator expects.
+verdict provably follows the oracle, not the agent's claim; tests honestly scoped.
+
+---
+
+## FINAL SIGN-OFF (devils-advocate, task #4) — SPLIT: CODE/DoD signed; DEMO open
+
+Split per team-lead, and it matches my own verification cleanly:
+
+**✅ CODE / DEFINITION-OF-DONE — SIGNED OFF (2026-05-23).** A completed real-key live run
+(2f307f10, env 4380af6e, fixed path) drives EVERY panel from REAL agent work: 5 business rules,
+oracle banner, COBOL↔Python diff (right-side == download, byte-identical), structured pytest
+(GREEN, 15 real per-case cases), forge+reload, download of the agent's REAL runnable module
+(Decimal+ROUND_HALF_UP; qa ran it → exact COBOL bytes), verdict EQUIVALENT. Honesty is verified
+from every angle: the verdict tracks the differential oracle, NOT the agent's self-report (wrong
+module → RED; crash → explicit RED; both tested + independently driven by me); provenance is
+truthfully labeled (agent_pytest / differential_oracle / model_output / files_api); no panel shows
+fabricated data; C13/C16 honesty fixes hold. The DoD ("a single live run drives the whole UI …
+ends EQUIVALENT with a downloadable, runnable payroll.py") is MET. **Nothing material is missing
+or misleading on the code/data path.**
+
+**⏳ DEMO READINESS — SIGN-OFF OPEN, pending two in-flight items:**
+1. **L11 heartbeat (task #6):** the live UI is frozen ~minutes during the agent's one silent
+   interaction (proven from the raw stream — 134 steps are one end-block). frontend-eng's
+   elapsed-timer + reassurance fix is in the working tree; needs to be COMMITTED and I want one
+   visual confirm the timer ticks during a real/simulated run before I clear it. Honest fix (real
+   clock, no faked phase progress) — clears the "looks hung" bar.
+2. **DEMO_SCRIPT honest strictly-live rewrite (task #7):** must set the multi-minute expectation
+   up front, show elapsed time, never fake speed (content in DEMO_NARRATIVE_live-DRAFT.md).
+
+**Non-blocking, flagged:** L12 (GET /api/download 404s after stream; live UI uses inline content,
+so contained). Optional cheap TTL-cache fix.
+
+I will convert the DEMO sign-off to ✅ once #6 is committed (+ a visual liveness confirm) and #7
+lands. No unresolved honesty or completeness gaps remain on the code path.
