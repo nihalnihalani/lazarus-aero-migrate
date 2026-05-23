@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""QA capture harness — live-verify a single managed-agent interaction and dump the
+"""Verification harness — produces live capability evidence for the merge gate; NOT part
+of the shipped product path (like src/sample/build_samples.sh, it's a dev/QA tool only).
+
+QA capture harness — live-verify a single managed-agent interaction and dump the
 EVIDENCE that distinguishes real capabilities from silent no-ops:
 
   * step-type histogram from BOTH the live stream and the authoritative get() fetch,
