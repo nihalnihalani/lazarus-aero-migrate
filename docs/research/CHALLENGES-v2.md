@@ -926,3 +926,36 @@ agent tools per §3).
   cross-module, demand either harness additions or explicit manual captures — do NOT accept "qa_capture
   ran clean" as proof for those three.** Recorded so the merge gate can't be cleared by an
   under-scoped capture.
+
+## L22 — POST-FIX STATE (HEAD c019274): L17 RESOLVED, L18 shape RESOLVED + thinking LIVE-PROVEN unsupported, regression GREEN
+
+- **L17 (grounding breadcrumbs) — RESOLVED (de85409, verified by me on committed HEAD).** Now reads the
+  plural SDK fields: `🔎 COBOL ROUNDED mode` / `🌐 https://ibm.com/docs` against real `GoogleSearchCallStep
+  (arguments.queries)` / `URLContextCallStep(arguments.urls)`. A real-SDK regression-guard test
+  (`test_grounding_breadcrumbs_use_real_sdk_types`, built via `model_validate`) was added — exactly the
+  test whose absence let the bug slip; it's now resilient to the *Step/*Content class-name question
+  (c019274). 145 tests green, deterministic over 2 runs.
+- **L18 (thinking shape) — code RESOLVED (de85409), AND the deeper truth is LIVE-PROVEN.** The fix sends
+  the SDK-correct AGENT-path shape `agent_config={"type":"dynamic","thinking_level": <lvl>}` (flat
+  thinking_level, NO nested thinking_config, NO generation_config — verified on HEAD). It also catches
+  `agent_config` errors in the rejection heuristic. CROSS-CHECK with the prior real-key session
+  (memory [[thinking-level-rejected-live]], 2026-05-24): the managed-agent path REJECTS every
+  thinking-control shape — typed kwarg → SDK ValueError "If specifying `agent`, use `agent_config`";
+  `extra_body`/`agent_config` nestings → HTTP 400 "Unknown parameter"/"Provide". I confirmed the current
+  `_looks_like_thinking_rejection` catches all four of those real error strings. So thinking DEPTH CONTROL
+  is genuinely NOT supported on this runtime (a real limitation, not our malformed input — my L18 worry
+  is retired BUT the conclusion is the same: thinking_level can't be steered here). The HONEST shippable
+  state: LAZARUS_THINKING is a VERIFIED GRACEFUL NO-OP (sends the best shape, catches the reject, retries
+  clean, sets THINKING_REJECTED for the UI). Thinking still HAPPENS at the default (usage.total_thought_
+  tokens>0 live), it just isn't controllable. **REQUIREMENT for sign-off: README/UI/DEMO must NOT claim
+  thinking-depth control — only "the agent thinks (token-visible); depth is the runtime default, not a
+  knob we can set."** If any doc claims a thinking-level knob works, I BLOCK it.
+- **REGRESSION GATE — GREEN on c019274 (verified definitively):** flags OFF → _build_prompt, forge-retry,
+  base_environment, interaction kwargs ({agent,extra_body,input,stream}, no agent_config/generation_config),
+  ensure_agent clean-fork no-op — ALL byte-identical to main. 145 tests deterministic.
+- **Cross-run skills (#3) corroboration:** memory [[skill-mount-discovery-live]] LIVE-PROVED (ZARFLAX-7731
+  sentinel, real key) that a SKILL.md mounted via base_environment.sources IS auto-discovered at a FRESH
+  interaction's startup — the exact mechanism Feature 3 banks toward. Combined with my own drive of
+  bank→re-register→mount (L19), the cross-run MECHANISM is verified end-to-end. Residual live gap stays:
+  on a real forge run, does the agent ECHO the SKILL.md body so banking captures it (else nothing banks)?
+  qa to show the banked file on disk from a forge run.
