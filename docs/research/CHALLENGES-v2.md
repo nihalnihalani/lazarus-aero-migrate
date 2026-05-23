@@ -424,3 +424,36 @@ content, so contained) + the breadcrumbs/phase-rail enhancement. Neither is a Ph
 **PHASE-1 SCOPE (per team-lead):** the heartbeat satisfies L11; breadcrumbs + L12 are Phase 2
 (separate branch, own re-verify). I will convert the DEMO sign-off to ✅ once #6 is COMMITTED
 (heartbeat now visually verified) and #7 lands. No unresolved honesty or completeness gaps remain.
+
+---
+
+## L13 — DEMO_SCRIPT claims a LIVE GnuCOBOL compile, but the verified run's ground truth was the PRE-CAPTURED golden bytes  — NEEDS FIX (script honesty; blocks my full DEMO sign-off)
+
+- **Claim (docs/DEMO_SCRIPT.md, ce3de81):** Prove beat — "It compiles & runs the **original COBOL
+  with real GnuCOBOL**, captures its real output, generates equivalence tests"; Q&A — "We compile
+  and run the original COBOL with real GnuCOBOL in the sandbox and assert byte-for-byte equivalence
+  against its output." Presented as happening LIVE on stage.
+- **EVIDENCE (my read of qa's shipping run /tmp/sse_full4.jsonl):** on the verified live run the
+  UI's ground truth did NOT come from a live in-sandbox compile:
+  - the `oracle` event's `compiler`/`note` is the **golden_io.json header** ("Canonical outputs
+    captured from the original COBOL binary (ground truth)") — i.e. the PRE-CAPTURED golden bytes,
+    not a live compile;
+  - the `pytest` is `source="agent_pytest"` (the agent's own marker, cross-checked vs golden by
+    qa) — NOT a live `differential_oracle` harness run;
+  - the agent's step text shows it only INVESTIGATED a compiler ("I will check if a COBOL compiler
+    `cobc` is already installed… check if micromamba or conda are pre-installed") and searched for
+    `golden_io.json`; no evidence a live `cobc` compile SUCCEEDED and produced the on-screen oracle.
+- **Why it matters:** for a STRICTLY-LIVE demo where the judge watches the actual run, narrating
+  "it compiles & runs the original COBOL with real GnuCOBOL" while the on-screen oracle banner is
+  actually the pre-captured golden header is a judge-catchable overclaim (same class as C4/C13). A
+  COBOL-literate DeepMind judge asking "did it compile that live, or is that cached?" exposes it.
+- **It's STILL honest if reworded:** the golden bytes ARE real GnuCOBOL output (captured ahead of
+  time = the falsifiable floor, per C4/C5); a live compile, if it happens, is an opportunistic
+  refresh. The fix is to match the script to that reality, NOT to claim a guaranteed live compile.
+- **Verdict: NEEDS FIX (script wording) — blocks my FULL demo sign-off.** Recommended rewording:
+  Prove beat → "It proves equivalence against the **original COBOL's real GnuCOBOL output** (the
+  ground-truth bytes), diffing the Python against them byte-for-byte" — and, if the agent does
+  install/compile cobc live this run, narrate THAT as the refresh; otherwise don't assert it. Q&A
+  "How do you know it's correct?" → "ground truth is the real COBOL's output — captured from real
+  GnuCOBOL; the agent also tries to recompile it live in the sandbox to refresh it." Keep it
+  truthful to whichever path actually fires on stage. Owner: team-lead/doc-keeper, BEFORE the push.
