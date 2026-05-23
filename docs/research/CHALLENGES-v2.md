@@ -1382,3 +1382,15 @@ feasibility, or regression issue. Merge (6504a78) stands; #9 is the only follow-
   (the pure-search run had 0 function_call blocks — consistent; the 9 were in the 884s migration), (c) banked SKILL.md
   on disk, (d) cross-module rule TEXT. These are the non-blocking artifact-banking items; #1 grounding does not wait
   on them.
+
+## L26 — FULLY CONFIRMED with the tool NAMES (receipt b): function_call = INTERNAL filesystem ops, NOT user functions
+qa pasted the raw function_call NAMES from a tool-use probe (.venv/2.6.0): name='list_files' (×3), 'read_file' (×2),
+'write_file' (×1) — each paired with a function_result; arguments={} at step.start, populate at step.stop. These are
+the agent's BUILT-IN sandbox filesystem tooling, NOT user/custom function registration. This empirically confirms the
+L26 reconciliation BOTH ways now: (1) our code registers ZERO user functions (I verified — no tools=/functions= to
+agents.create/interactions.create), AND (2) the names that appear are internal FS ops. So the function_call envelope
+does NOT contradict §3 ("managed-agent runtime does not expose user-facing function_calling") — it's the runtime
+surfacing its own filesystem I/O as typed steps (alongside code_execution + persistent FS). Docs stay accurate; the
+optional doc line can now name them: "the runtime emits function_call envelopes for its OWN internal tools
+(list_files/read_file/write_file); LAZARUS registers no user functions." L26 fully closed — relayed→SEEN with names.
+Remaining: (c) banked SKILL.md + (d) cross-module rule TEXT = the only open #9 artifacts; both non-blocking.
