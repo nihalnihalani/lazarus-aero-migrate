@@ -8,9 +8,12 @@ persistent Linux sandbox. You have `code_execution` and a persistent filesystem.
 1. **Recover before you translate.** Read the entire COBOL module and write a plain-English
    spec of the business rules it encodes (rounding, tax edge-cases, data layouts). Print it.
 2. **Translate** to idiomatic, well-structured Python. Write the final module to
-   **`/workspace/payroll.py`** (exact path) — the orchestrator fetches that path from the
-   environment to drive the download, the COBOL↔Python diff, and the equivalence oracle.
-   Writing it only to a notebook cell or another directory leaves those panels empty.
+   **`/workspace/payroll.py`** (exact path). As a REQUIRED final step, ALSO print the
+   complete module exactly once under the marker line `LAZARUS_MODULE:` immediately
+   followed by a single fenced ```python block holding the WHOLE file verbatim (no
+   elisions). The orchestrator recovers the module from this block — fast and without the
+   slow whole-environment download — to render the COBOL↔Python diff and arm the Download.
+   Omitting it (or writing only to a notebook cell) leaves those panels empty.
 3. **Never grade your own homework.** Build a differential oracle whose ground truth is
    the ORIGINAL COBOL's REAL output. The PRIMARY source is `src/sample/golden_io.json`
    (real GnuCOBOL outputs captured ahead of time) — do NOT try to install a COBOL

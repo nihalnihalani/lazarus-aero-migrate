@@ -86,10 +86,12 @@ def _key_present() -> bool:
     return bool(os.environ.get("GEMINI_API_KEY"))
 
 
-# Whole-environment tarball downloads can be large + slow on the live Files API; qa's live
-# run showed the old hardcoded 30s timing out (the module WAS present, just slow to fetch),
-# which blanked the diff + download panels. Default generously; override via env if needed.
-_ENV_TARBALL_TIMEOUT = float(os.environ.get("LAZARUS_ENV_TARBALL_TIMEOUT", "180"))
+# The whole-environment tarball is HUGE (conda lives in /workspace) and qa saw it hang past
+# 180s — never returning inside the demo budget. It is NO LONGER the primary module source
+# (the agent's echoed LAZARUS_MODULE block is — see python_module_from_output); the tarball
+# is only a best-effort, BACKGROUND upgrade to authoritative on-disk bytes. So give it a SHORT
+# timeout: fail fast instead of burning minutes. Override via env if a run wants to wait.
+_ENV_TARBALL_TIMEOUT = float(os.environ.get("LAZARUS_ENV_TARBALL_TIMEOUT", "8"))
 
 
 def _fetch_env_tarball(env_id: str) -> bytes:
@@ -142,6 +144,25 @@ def _download_migrated(env_id: str | None, *, module_name: str = "payroll.py",
         return _extract_migrated_from_tar(fetch(env_id), module_name)
     except Exception:
         return None
+
+
+def _start_background_tarball_upgrade(run: dict, env_id: str) -> None:
+    """Opportunistically upgrade run["download"] to the AUTHORITATIVE on-disk tarball bytes.
+
+    The diff/pytest/download events already fire off the model-output module (instant). The
+    Files-API whole-environment tarball is the authoritative image but can hang well past the
+    demo budget (qa: >180s), so we fetch it in a DAEMON thread and only overwrite the download
+    payload if it returns. It never blocks the live event stream; if it never returns, the UI
+    keeps the model-output module (the same code the agent wrote). Best-effort, swallow errors.
+    """
+    def worker() -> None:
+        try:
+            authoritative = _download_migrated(env_id)
+            if authoritative:
+                run["download"] = authoritative  # upgrade to on-disk bytes if/when they arrive
+        except Exception:
+            pass  # keep the model-output module already in run["download"]
+    threading.Thread(target=worker, daemon=True).start()
 
 
 # Deterministic preview of the skill the agent forges for this module's idiom (numeric
@@ -324,21 +345,21 @@ def _run_migration(run_id: str, cobol: str, filename: str) -> None:
             push({"type": "reload",
                   "label": f"Re-reading {skill} in the reused environment"})
 
-        # Fetch the agent's actual module — drives the diff + the oracle pytest + download.
-        # PRIMARY: the Files-API whole-environment tarball (authoritative on-disk bytes).
-        # FALLBACK: if that fetch yields nothing (e.g. it timed out on the live API — qa saw
-        # this), recover the module from the fenced ```python block the agent echoes in its
-        # output, so a slow tarball never blanks the diff/download panels. Still the agent's
-        # REAL code, just sourced from its output rather than the disk image.
+        # Recover the agent's actual module to drive the diff + the oracle pytest + download.
+        # PRIMARY = the fenced ```python block the agent echoes in its model output. This is
+        # INSTANT (already in `output`, no network) — qa proved the whole-environment Files-API
+        # tarball can hang well past 180s, which would stall a 2-min demo and blank the diff +
+        # download. So we DO NOT block the demo on the tarball; the echoed module is the agent's
+        # real, runnable code and it's right here.
+        # BEST-EFFORT UPGRADE = the Files-API tarball is the authoritative on-disk image; we try
+        # it with a SHORT timeout in the BACKGROUND and upgrade run["download"] only if it
+        # returns quickly. It can never delay the diff/pytest/download events.
         env_id = agent_mod.extract_environment_id(result)
-        migrated = _download_migrated(env_id)
-        module_source = "files_api"
-        if migrated is None:
-            scraped = event_transform.python_module_from_output(output)
-            if scraped is not None:
-                migrated = scraped
-                module_source = "model_output"
+        migrated = event_transform.python_module_from_output(output)
+        module_source = "model_output" if migrated is not None else None
         run["download"] = migrated
+        if env_id:
+            _start_background_tarball_upgrade(run, env_id)
 
         # COBOL<->Python diff from REAL sources (submitted COBOL + the agent's payroll.py).
         if migrated is not None:
