@@ -103,16 +103,13 @@ LAZARUS is a **single autonomous agent** (no fragile multi-agent orchestration) 
 ## 4. Quick Start
 
 ```bash
-pip install -r requirements.txt
+# One command: sets up the venv, starts the server (UI + API at one origin),
+# waits for health, and opens the browser.
+export GEMINI_API_KEY=...     # optional — live migration; ?mock=1 replays without a key
+./run.sh                      # → http://127.0.0.1:8000   (PORT=9000 ./run.sh for another port)
 
-# Run the live pipeline (real Gemini Managed Agent):
-export GEMINI_API_KEY=...                 # provisioned at the event
-uvicorn server:app --app-dir src --port 8000          # backend
-python3 -m http.server 8080 --directory web           # UI (separate shell)
-# open http://127.0.0.1:8080  →  drop a COBOL module (or "use the sample")
-
-# No key? Replay the cached run (22s, real golden bytes):
-#   open http://127.0.0.1:8080/index.html?mock=1
+# No key? The cached replay (22s, real GnuCOBOL golden bytes):
+#   http://127.0.0.1:8000/index.html?mock=1
 ```
 
 Run the test suite (network-free, no key, no cobc needed):
@@ -126,6 +123,7 @@ pytest -q          # 96 tests
 ```
 lazarus-aero-migrate/
 ├── README.md
+├── run.sh                           # one-command launcher (UI + live agent)
 ├── .github/workflows/tests.yml      # CI: runs the 96 tests on every push
 ├── docs/
 │   ├── ARCHITECTURE.md              # system design, data flow, the oracle
