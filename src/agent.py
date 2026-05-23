@@ -314,6 +314,76 @@ def _build_prompt(cobol: str, *, ground: bool = False) -> str:
     )
 
 
+def _render_modules(modules: list[tuple[str, str]]) -> str:
+    """Fence every (name, source) module so the agent sees the whole codebase at once."""
+    blocks = []
+    for name, source in modules:
+        label = name or "module.cob"
+        blocks.append(f"=== {label} ===\n```cobol\n{source}\n```")
+    return "\n\n".join(blocks)
+
+
+def _build_multi_prompt(modules: list[tuple[str, str]], *, ground: bool = False) -> str:
+    """Whole-codebase prompt (Feature 4): migrate a SET of COBOL modules (+ copybooks)
+    together, recovering CROSS-MODULE business rules (shared copybook layouts, a rule split
+    across a caller + its CALLed subprogram, a constant defined in one module and used in
+    another). All modules are presented at once so the agent can reason across them.
+
+    Reuses the single-file marker + oracle contract verbatim (so the live UI's panels work
+    unchanged), but the recover/translate steps are scoped to the whole module set. Used
+    ONLY when migrate() is given >1 file; the single-file path still calls _build_prompt and
+    stays byte-identical.
+    """
+    preamble = _GROUNDING_PREAMBLE if ground else ""
+    names = ", ".join(name or "module.cob" for name, _ in modules)
+    return preamble + (
+        f"Migrate this COBOL CODEBASE ({len(modules)} files: {names}) to idiomatic Python. "
+        "Treat the files as ONE system, not in isolation. Work in the sandbox.\n"
+        "1. CROSS-MODULE RECOVERY: read EVERY module + copybook below and recover the "
+        "business rules across the whole set in plain English — including rules that span "
+        "modules: shared copybook record layouts (COPY), a computation split across a "
+        "calling program and the subprogram it CALLs, constants/88-levels defined in one "
+        "module and relied on by another, and any ordering/lifecycle dependency between "
+        "modules. Print the recovered cross-module rules.\n"
+        "2. Translate to idiomatic, well-structured Python (one cohesive package/module set "
+        "preserving the cross-module structure) and write the primary entrypoint module to "
+        "/workspace/payroll.py (the orchestrator fetches exactly that path).\n"
+        "3. DIFFERENTIAL ORACLE (ground truth = the ORIGINAL COBOL's REAL output):\n"
+        "   - PRIMARY: src/sample/golden_io.json holds real GnuCOBOL outputs captured "
+        "ahead of time. Use these as ground truth. Do NOT try to install a COBOL "
+        "compiler; the diff must not depend on a live compile.\n"
+        "   - LIVE REFRESH: install real GnuCOBOL WITHOUT root via micromamba + conda-forge "
+        "(`micromamba create -p /workspace/cobol -c conda-forge gnucobol`) or use `cobc` if "
+        "present, then compile + run the ORIGINAL COBOL system over the battery to confirm "
+        "golden_io.json is fresh — but the equivalence check stays byte-for-byte.\n"
+        "4. Generate equivalence tests asserting python_output == golden_cobol_output "
+        "byte-for-byte; run pytest.\n"
+        "5. On failure, diagnose the TRUE idiom from the byte diff and write "
+        ".agents/skills/<idiom>/SKILL.md teaching yourself how to handle it, commit it, and "
+        "report the path you wrote. Common COBOL idioms across modules: numeric DISPLAY "
+        "de-editing + `ROUNDED` round-half-UP (use Decimal.quantize(ROUND_HALF_UP), not "
+        "Python round()), REDEFINES, OCCURS DEPENDING ON, sign overpunch, shared COPY "
+        "layouts. Name the skill for the real idiom.\n"
+        "6. EMIT MACHINE-READABLE MARKERS for the live UI. These are REQUIRED, one per "
+        "line, with the EXACT prefix, as plain text in your output (not inside a code "
+        "cell). The UI parses these prefixes verbatim:\n"
+        "   - For EACH recovered rule (emit at least 3, including the CROSS-MODULE ones): "
+        "`LAZARUS_RULE: {\"title\":..., \"plain\":..., \"cobol_ref\":..., "
+        "\"severity\":\"rule|edge_case|gotcha\"}`\n"
+        "   - After running the oracle, exactly ONE line: `LAZARUS_ORACLE_JSON: "
+        "[{\"input\":..., \"cobol\":..., \"python\":..., \"match\":true|false}, ...]` "
+        "covering EVERY golden input.\n"
+        "   - As your FINAL step, print the COMPLETE final payroll.py exactly once, on the "
+        "line `LAZARUS_MODULE:` immediately followed by a single fenced ```python block "
+        "containing the WHOLE entrypoint module verbatim (the same bytes you wrote to "
+        "/workspace/payroll.py) — no elisions, no '...'.\n"
+        "Emit the markers even on a failing iteration (the UI shows RED then GREEN). "
+        "When done, state clearly whether all equivalence tests PASS.\n"
+        f"Stop when tests pass or after {MAX_ITERATIONS} iterations.\n\n"
+        f"COBOL CODEBASE:\n{_render_modules(modules)}"
+    )
+
+
 def _build_forge_retry_prompt(skill_path: str, *, ground: bool = False) -> str:
     """Follow-up prompt for the FORGE retry turn (SAFE re-read pattern).
 
@@ -712,8 +782,32 @@ def _run_interaction(client: genai.Client, *, input_text: str, environment):
     return final
 
 
-def migrate(client: genai.Client, cobol_path: str):
+def _normalize_cobol_paths(cobol_path, cobol_paths) -> list[str]:
+    """Resolve migrate()'s single-or-multi inputs into an ordered list of paths.
+
+    Accepts the single-file positional (str or pathlib.Path), a list passed positionally,
+    or the cobol_paths= keyword (Feature 4). Exactly one source must be given.
+    """
+    if cobol_paths is not None and cobol_path is not None:
+        raise ValueError("pass either cobol_path or cobol_paths, not both")
+    src = cobol_paths if cobol_paths is not None else cobol_path
+    if src is None:
+        raise ValueError("migrate() requires a COBOL path (or list of paths)")
+    if isinstance(src, (str, pathlib.Path)):
+        return [str(src)]
+    paths = [str(p) for p in src]
+    if not paths:
+        raise ValueError("migrate() got an empty file list")
+    return paths
+
+
+def migrate(client: genai.Client, cobol_path=None, *, cobol_paths=None):
     """Run the write -> run -> prove -> self-heal loop, streaming steps to the UI.
+
+    Single-file (default, UNCHANGED): migrate(client, "path.cob") reads that one module and
+    uses the byte-identical _build_prompt. Whole-codebase (Feature 4): pass cobol_paths=[...]
+    (or a list positionally) to ingest MULTIPLE COBOL files + copybooks at once and recover
+    CROSS-MODULE business rules via _build_multi_prompt.
 
     The MAX_ITERATIONS cap is ENFORCED here in code (C10): a real per-turn counter is
     emitted to the UI via emit_iteration() and the loop hard-stops at MAX_ITERATIONS —
@@ -721,16 +815,23 @@ def migrate(client: genai.Client, cobol_path: str):
     death). State threads across forge->retry turns via environment_id. Returns the
     final completed interaction (carries .id, .environment_id, .steps).
     """
-    cobol = pathlib.Path(cobol_path).read_text()
+    paths = _normalize_cobol_paths(cobol_path, cobol_paths)
     interaction = None
     ground = _grounding_enabled()   # opt-in web-grounding (Feature 1); default off
+
+    # Single file -> the byte-identical shipped prompt. Multiple -> the cross-module prompt.
+    if len(paths) == 1:
+        first_prompt = _build_prompt(pathlib.Path(paths[0]).read_text(), ground=ground)
+    else:
+        modules = [(pathlib.Path(p).name, pathlib.Path(p).read_text()) for p in paths]
+        first_prompt = _build_multi_prompt(modules, ground=ground)
 
     for iteration in range(1, MAX_ITERATIONS + 1):
         emit_iteration(iteration, MAX_ITERATIONS)   # visible counter (UI renders this)
 
         if iteration == 1:
             interaction = _run_interaction(
-                client, input_text=_build_prompt(cobol, ground=ground), environment="remote"
+                client, input_text=first_prompt, environment="remote"
             )
         else:
             # Reuse the SAME environment so the forged SKILL.md is on disk, and explicitly
