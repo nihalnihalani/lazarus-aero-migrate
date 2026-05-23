@@ -1007,3 +1007,17 @@ agent tools per §3).
     flag would crash the run instead of no-op'ing). Either outcome is shippable IF the docs match it; what
     I will NOT accept is asserting a verdict from the OLD memory's different-shape result. My L22 "verified
     no-op" is WITHDRAWN pending this re-test.
+
+### L24 — RESOLVED (872f190): qa live-tested the exact shape — ACCEPTED-but-IGNORED, now labeled honestly
+qa ran the current agent_config={"type":"dynamic","thinking_level":X} on the real key (the THIRD outcome,
+not the binary I posed): the runtime ACCEPTS it (no 400) but SILENTLY IGNORES the depth — thought-token
+counts do NOT track the requested level (high ≈ minimal, often fewer). 872f190 relabels the live trace to
+exactly that ("the agent runtime ACCEPTS the param but does NOT honor depth: thinking runs at the default
+and thought-token counts don't track the level") with ZERO implication of control; the thought-token line
+is now "evidence the agent THOUGHT, not that the level applied"; the THINKING_REJECTED branch is documented
+as defensive-only (not the observed behavior). I VERIFIED on the code: flag-OFF stays byte-identical (no
+agent_config); the ON trace makes no false claim; 145 green.
+THINKING_LEVEL VERDICT: HONEST + shippable as "documented knob tried, runtime ignores it, trace says so" —
+NOT a working depth control. Sign-off conditions: (1) trace/docs imply ZERO control [MET]; (2) qa attach
+the raw minimal-vs-high token numbers as the empirical receipt [pending]. STRONG honesty outcome — a
+non-working capability surfaced truthfully rather than hidden.
