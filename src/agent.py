@@ -950,12 +950,20 @@ def emit_iteration(current: int, total: int) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--input", default="src/sample/payroll.cob")
+    # Feature 4 entry point: --input accepts ONE path (default, single-module, byte-identical)
+    # OR MULTIPLE paths (whole-codebase: modules + copybooks) for cross-module recovery.
+    ap.add_argument("--input", nargs="+", default=["src/sample/payroll.cob"],
+                    help="one COBOL module (default), or several modules + copybooks "
+                         "for cross-module migration")
     args = ap.parse_args()
 
     client = genai.Client()  # reads GEMINI_API_KEY
     ensure_agent(client)
-    result = migrate(client, args.input)
+    # One path -> the single-file default (unchanged); several -> the multi-module path.
+    if len(args.input) == 1:
+        result = migrate(client, cobol_path=args.input[0])
+    else:
+        result = migrate(client, cobol_paths=args.input)
 
     # Persist the environment id so follow-up turns reuse the same sandbox + forged skills:
     env_id = extract_environment_id(result)
