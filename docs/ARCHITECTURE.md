@@ -93,7 +93,7 @@ client.agents.create(
         "type": "remote",
         "sources": [
             {"type": "inline", "target": ".agents/AGENTS.md", "content": "..."},
-            {"type": "inline", "target": ".agents/skills/cobol-display-rounding/SKILL.md", "content": "..."},
+            {"type": "inline", "target": ".agents/skills/numeric-display-rounding/SKILL.md", "content": "..."},
         ],
     },
     # tools omitted -> defaults to code_execution + google_search + url_context

@@ -47,25 +47,47 @@ investor are in the room and will fact-check every number and every platform cla
   - https://ai.google.dev/gemini-api/docs/custom-agents
   - https://ai.google.dev/gemini-api/docs/antigravity-agent
   - https://blog.google/innovation-and-ai/technology/developers-tools/managed-agents-gemini-api/
-- **Verdict: CONFIRMED** that runtime skill discovery exists. **OPEN SUB-QUESTION (asked
-  researcher-agents):** confirm a SKILL.md written *mid-interaction* is re-discovered
-  *within the same turn*, vs requiring the next interaction. If it needs a fresh turn, the
-  demo must show forge → (new turn, same env) → green, NOT one continuous turn. Either is
-  honest, but the DEMO_SCRIPT implies one continuous beat — adjust if needed.
+- **Verdict: CONFIRMED (primitive) + RESOLVED as a TWO-TURN loop.** The open sub-question is
+  now answered at primary source (researcher-agents, custom-agents.md.txt verbatim): skill
+  discovery is a STARTUP/SCAN event — *"The Antigravity runtime scans `.agents/` … for these
+  files"* / *"auto-discovers and registers them."* There is **NO** "during execution / on
+  demand / mid-interaction" language anywhere in the API docs. So:
+  - A SKILL.md the agent writes MID-RUN is **NOT** auto-registered within the same turn. (It
+    can still be USED in-turn by reading the file directly via `code_execution` — it's on disk
+    — but it isn't a registered managed skill until the next interaction's startup scan.)
+  - **FORGE self-heal is a TWO-TURN loop:** Turn 1 → hit unknown idiom → write
+    `.agents/skills/<idiom>/SKILL.md` (RED). Turn 2 → NEW interaction reusing the SAME
+    `environment_id` → startup scan registers the new skill → retry → GREEN.
+  - **This is REAL and demoable** — just honestly a 2-turn loop, not a single "hot-reload
+    mid-thought." Any wording implying single-turn in-flight hot-reload = OVERCLAIM (see C16).
+  - **Already handled in code:** `src/agent.py` implements the SAFE pattern — the forge retry
+    reuses `environment_id` and the retry prompt EXPLICITLY re-reads `.agents/skills/` rather
+    than assuming auto-reload (docstring: "do NOT rely on silent mid-run auto-reload … which
+    is UNVERIFIED"). Good. The remaining gap is the DEMO/UI surface (C13/C16) implying one
+    continuous beat — show the second turn, or narrate "write → next pass (same env) → green."
 
 ### C1b. Do forged skills "persist forever" and "accumulate across runs"?  — NEEDS FIX
 - **Claim:** README Q&A "the persistent environment + forged skills accumulate dialect
   coverage across runs"; AGENTS.md step 5 "These persist for future runs"; the investor
   moat = "accumulated dialect skills."
 - **Attack:** persistence is scoped to ONE environment lineage, not the saved agent.
-- **Evidence:** Quickstart, verbatim: *"Each invocation forks the base environment, so
-  every run starts clean."* Files persist only when the SAME `environment_id` is reused;
-  a fresh `interactions.create(agent="lazarus", environment="remote")` starts WITHOUT the
-  forged skill. To make a skill permanent you must re-register the agent with it mounted.
+- **Evidence — TWO code paths, both verbatim from quickstart.md.txt (researcher-agents
+  reconciled my "forks clean" with their "files persist" — they're different paths):**
+  - **Invoke a SAVED agent BY ID** → *"Each invocation forks the base environment, so every
+    run starts clean."* The forged skill is GONE. To bank it permanently it must be mounted
+    in `base_environment` (re-register the agent).
+  - **Reuse an EXPLICIT `environment_id`** (`environment=<env_id>`) → *"Files from turn 1
+    persist in turn 2."* Installs + files persist in the SAME sandbox.
   - https://ai.google.dev/gemini-api/docs/managed-agents-quickstart
-- **Verdict: NEEDS FIX.** Reword to: "forged skills persist for the life of the
-  environment (reused via `environment_id`); to make them permanent across new agents we
-  re-register the agent with the skill mounted." (Escalated to lead.)
+- **Verdict: NEEDS FIX.** Reword the moat/persistence claims to state BOTH paths precisely so
+  a judge probing "does it really persist?" gets the exact answer: "a forged skill persists
+  for the life of the reused `environment_id` (same-sandbox turn-to-turn); a fresh invocation
+  of the saved agent forks clean — to bank a skill permanently we re-register the agent with
+  it mounted in `base_environment`. No 'persists forever / accumulates across runs.'"
+- **DEPENDENCY for C4:** the GnuCOBOL pre-warm install only survives onto the demo run if the
+  code uses the **explicit-`environment_id`-reuse** path (one long-lived env for the whole
+  session), NOT invoke-by-saved-agent-id (which forks clean and would lose the install).
+  backend-eng must honor env-id reuse. (Flagged consistent with researcher-agents.)
 
 ### C2. Is the "single-agent / no computer_use / no file_search" honesty claim true?  — CONFIRMED
 - **Claim:** ARCHITECTURE §4 lists `computer_use`, `file_search`, `mcp`,
@@ -79,10 +101,16 @@ investor are in the room and will fact-check every number and every platform cla
   sub-agent deployment in the Managed Agents API (that's Antigravity 2.0 / ADK).
   - https://ai.google.dev/gemini-api/docs/antigravity-agent
 - **Verdict: CONFIRMED.** Our honesty framing is accurate and is actually a *strength*
-  with a DeepMind judge. No fix. (One precision nit: ARCHITECTURE §4 says defaults are
-  "code_execution + google_search + url_context" — correct. agent.py comment claims
-  "structured output" is unsupported — the doc doesn't list structured output among the
-  unavailable tools, so drop that specific word to avoid an unsourced claim.)
+  with a DeepMind judge. No fix to the tools framing.
+  - **CORRECTION (I had this backwards earlier).** `structured output` IS genuinely
+    unsupported by the Antigravity agent — researcher-agents quotes the doc: "Also
+    unsupported: temperature/top_p/top_k/stop_sequences/max_output_tokens, **structured
+    outputs**, audio/video/doc inputs (text+image only)." So the agent.py comment is CORRECT
+    to list it. My earlier "drop structured output as unsourced" instruction to doc-keeper was
+    WRONG — do NOT drop it. The only precision point: it's an OUTPUT/generation-config
+    limitation, NOT a *tool*, so it shouldn't sit inside the unsupported-*tools* line; list it
+    separately (e.g. "also unsupported: structured outputs, custom generation config,
+    audio/video inputs"). This is a strength too — it shows we read the limits carefully.
 
 ### C3. Is the base agent ID real?  — CONFIRMED
 - **Claim:** `antigravity-preview-05-2026`.
@@ -137,6 +165,12 @@ investor are in the room and will fact-check every number and every platform cla
     binary in a repo source is not reliably executable). Do NOT use this path. (My earlier
     "mount a static cobc binary" suggestion is SUPERSEDED.)
   - **REJECTED — live apt:** apt needs root; root is absent. Use the userland conda install.
+  - **RESIDUAL RISKS to verify live before stage (NEEDS-VERIFY, per researcher-agents):**
+    (a) root/sudo undocumented → apt unreliable, so the conda path is mandatory not optional;
+    (b) the conda-forge package shipping its own compiler+libcob+gmp is the reason no system
+    `gcc`/`gmp` is needed — but the actual `micromamba install` + `cobc` run must be smoke-tested
+    in a real sandbox the morning of (task #8/#9); (c) keep golden_io.json as the captured-output
+    fallback so the differential oracle stays honest if the live install flakes on stage.
   - **Honesty bottom line:** falsifiability is INTACT — it's the real compiler's output whether
     live (conda-installed cobc) or pre-captured (golden_io.json). The docs only need the
     **mechanism** corrected: drop "apt-get / pre-install into base_environment"; say "the agent
@@ -280,10 +314,13 @@ investor are in the room and will fact-check every number and every platform cla
   prompt** ("Stop ... after 4 iterations"). There is NO orchestrator-side loop, NO counter,
   NO kill switch. The model can ignore the instruction and loop; the "visible counter" UI
   does not exist. The single safety net the demo leans on is not actually enforced.
-- **Verdict: NEEDS FIX.** Enforce a real cap: drive the loop turn-by-turn from the
-  orchestrator (re-issue `interactions.create` per iteration, count in Python, hard-stop at
-  4 and cut to the cached green run), and render the counter in the UI. A prompt suggestion
-  is not a hard cap. (Coordinate with backend-eng / frontend-eng.)
+- **Verdict: ~~NEEDS FIX~~ → RESOLVED (verified in code 2026-05-23).** backend-eng now
+  enforces it: `src/agent.py` has a real `for iteration in range(1, MAX_ITERATIONS + 1)` loop
+  with a per-turn `emit_iteration(current, total)` counter (docstring: "The MAX_ITERATIONS cap
+  is ENFORCED here in code (C10) … the loop hard-stops at MAX_ITERATIONS"). `src/server.py`
+  forwards it as a `phase` event with `iteration`/`iteration_cap` to the UI, and `/api/health`
+  exposes `max_iterations`. Orchestrator-side loop + visible counter + hard stop — exactly the
+  fix. No longer a prompt-only suggestion.
 
 ### C11. agent.py uses unverified SDK / streaming field names  — NEEDS FIX
 - **Claim:** agent.py reads `event.event_type == "step.delta"`, `event.delta`, `delta.type

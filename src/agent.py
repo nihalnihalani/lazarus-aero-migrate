@@ -171,20 +171,40 @@ def _model_output_text(step) -> str:
     )
 
 
-def extract_output_text(interaction) -> str:
+def extract_output_text(interaction, client: genai.Client | None = None) -> str:
     """Return the agent's terminal model output text.
 
-    C11 hardening: the agent resource has NO guaranteed `.output_text`, and the terminal
-    interaction object is not guaranteed to carry a `.steps` array either. So we PREFER
-    the text accumulated from the stream during _run_interaction (always available per
-    §8's step.* events), and fall back to iterating `.steps` if present.
+    Resolution order (live-path safe — the completed event ships EMPTY outputs):
+      1. text accumulated from the stream during _run_interaction (the live trace),
+      2. the interaction object's own model_output steps (a fetched/non-streaming object),
+      3. an authoritative client.interactions.get(id) fetch, when a client is available
+         and nothing above produced text (the completed event was empty + no deltas).
+    `output_text` is intentionally NOT trusted as the primary source (not a documented
+    field below SDK 2.3.0; empty on the completed event).
     """
     streamed = getattr(interaction, "_lazarus_output_text", None)
     if streamed:
         return streamed
-    return "".join(
+
+    from_steps = "".join(
         _model_output_text(step) for step in (getattr(interaction, "steps", None) or [])
     )
+    if from_steps:
+        return from_steps
+
+    fetch_client = client or getattr(interaction, "_lazarus_client", None)
+    itx_id = getattr(interaction, "id", None)
+    if fetch_client is not None and itx_id is not None \
+            and hasattr(fetch_client, "interactions") \
+            and hasattr(fetch_client.interactions, "get"):
+        try:
+            fetched = fetch_client.interactions.get(itx_id)
+            return "".join(
+                _model_output_text(s) for s in (getattr(fetched, "steps", None) or [])
+            )
+        except Exception:
+            return ""
+    return ""
 
 
 def extract_environment_id(interaction) -> str | None:
@@ -202,10 +222,18 @@ def _forged_skill_path(output_text: str) -> str | None:
 
 
 def _run_interaction(client: genai.Client, *, input_text: str, environment):
-    """One streamed interaction. Forwards step.delta text to the UI, accumulates the
-    model output FROM THE STREAM (so we never depend on a terminal `.steps` array,
-    C11), and returns the completed interaction object with that text attached as
-    `_lazarus_output_text`."""
+    """One streamed interaction. Forwards step.delta text to the UI and accumulates the
+    model output FROM THE STREAM.
+
+    LIVE-PATH NOTE (verified, findings-agents.md): the `interaction.completed` event ships
+    `event.interaction` "with empty outputs to reduce the payload size" — its .steps /
+    output_text are EMPTY on the real API. So we (1) accumulate text from step.delta /
+    step.stop during the stream (the live trace), and (2) after the stream, fetch the
+    AUTHORITATIVE final object via client.interactions.get(interaction_id). We return that
+    fetched object (carrying real .steps + .environment_id), with the streamed text
+    attached as `_lazarus_output_text` and the client attached so extract_output_text can
+    do a get() fallback if needed.
+    """
     stream = client.interactions.create(
         agent=AGENT_ID,
         input=input_text,
@@ -213,9 +241,13 @@ def _run_interaction(client: genai.Client, *, input_text: str, environment):
         extra_body={"environment": environment},   # env via extra_body (verified surface)
     )
 
-    final = None
+    completed = None
+    interaction_id = None
+    env_id = None
     output_parts: list[str] = []
     for event in stream:
+        # Every event carries interaction_id (resume/fetch token).
+        interaction_id = getattr(event, "interaction_id", None) or interaction_id
         et = getattr(event, "event_type", None)
         if et == "step.delta":
             text = getattr(getattr(event, "delta", None), "text", None)
@@ -226,19 +258,40 @@ def _run_interaction(client: genai.Client, *, input_text: str, environment):
             # Terminal text of a completed step (verified §8 carries the full Step here).
             output_parts.append(_model_output_text(getattr(event, "step", None)))
         elif et == "interaction.completed":
-            final = getattr(event, "interaction", None) or final
+            completed = getattr(event, "interaction", None)
+            # env id is still present on the (otherwise-empty) completed interaction.
+            env_id = extract_environment_id(completed) or env_id
+            interaction_id = getattr(completed, "id", None) or interaction_id
+
+    # Authoritative final fetch: the completed event's payload is empty, so re-fetch the
+    # full interaction object when we can. Fall back to the completed event if get() fails.
+    final = completed
+    if interaction_id is not None and hasattr(client, "interactions") \
+            and hasattr(client.interactions, "get"):
+        try:
+            fetched = client.interactions.get(interaction_id)
+            if fetched is not None:
+                final = fetched
+        except Exception:
+            pass  # network/SDK hiccup -> use the completed event + streamed text
 
     if final is not None:
         accumulated = "".join(output_parts)
-        # Prefer streamed text; if the stream carried none, fall back to terminal .steps.
-        if not accumulated:
+        if not accumulated:  # nothing streamed -> use the fetched object's steps
             accumulated = "".join(
                 _model_output_text(s) for s in (getattr(final, "steps", None) or [])
             )
         try:
             final._lazarus_output_text = accumulated
+            final._lazarus_client = client
         except (AttributeError, TypeError):
-            pass  # immutable terminal object; extract_output_text will read .steps
+            pass  # immutable object; extract_output_text(client=) can still fetch
+        # Make sure env id survives even if the fetched object lacks it.
+        if env_id and not extract_environment_id(final):
+            try:
+                final.environment_id = env_id
+            except (AttributeError, TypeError):
+                pass
     return final
 
 
