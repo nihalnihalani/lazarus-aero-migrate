@@ -1304,3 +1304,23 @@ Every code/honesty/regression item I raised (L16-L30 incl. the optional matcher 
 on the pinned SDK. The verdict/oracle/falsifiability core is untouched. The merge gate is now PURELY:
 (1) #1 grounding_tool_count>0 line, (2) #3 banked SKILL.md on a forge, (3) #4 PAYMAIN→TAXSUB rule + golden,
 (4) #2 thinking token stamp — each produced via .venv/2.6.x. I sign off the moment those land.
+
+## L31 — POST-MERGE: "silently ignored / does NOT honor depth (high≈2096<minimal≈2408)" is now an OVERCLAIM — qa's defensible final is INCONCLUSIVE. Soften the shipped wording.
+- qa ran the definitive thinking probe ON THE PINNED 2.6.0 (.venv, version printed inline) and RETRACTED BOTH prior
+  verdicts. Defensible final: shipped shape ACCEPTED (settled); whether the level is HONORED is INCONCLUSIVE —
+  thought-token NOISE (±~1000/call) swamps any effect; interleaved samples NON-MONOTONIC (2 high<min, 6 high>min,
+  12 flat; means 2785/2692/2665). Neither "ignored" nor "honored" is provable.
+- OVERCLAIM now on main (6504a78): agent.py:697-698 "depth is IGNORED (... high ≈ 2096 < minimal ≈ 2408)";
+  agent.py:732/748/772 "does NOT honor depth"; README:103 "accepts the param but SILENTLY IGNORES it." All assert a
+  DEMONSTRATED null with cherry-picked high<minimal numbers — but qa says that direction was noise (other samples
+  high>minimal). A judge who re-runs and sees high>minimal catches it.
+- Honest framing: "request the level via the SDK-correct agent_config shape; runtime ACCEPTS it (no 400); thinking
+  runs (large token counts); CANNOT demonstrate the level changes behavior — noise-dominated, non-monotonic. No depth
+  control; effect INCONCLUSIVE." Not "silently ignored / does not honor" + numbers.
+- Verdict: NEEDS WORDING FIX (post-merge, low-effort, judge-relevant). Replace "silently ignored / does NOT honor
+  depth (high≈2096<minimal≈2408)" → "accepted; effect on depth INCONCLUSIVE (noise-dominated, non-monotonic)" in
+  README:103 + agent.py docstrings (697/732/748) + trace marker (772). Direction of the error is SAFE (overclaims a
+  NEGATIVE, not a capability) → NOT a stop-the-line/unmerge issue; but it IS a catchable inaccuracy. Belongs in
+  team-lead's docs pass. User-facing headline ("no depth control / not a knob we can set") stays TRUE either way —
+  only the MECHANISM claim (proven-ignored vs unprovable) needs softening. Grounding/skill/multi-module + regression +
+  falsifiability unaffected.
