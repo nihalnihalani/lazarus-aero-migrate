@@ -62,7 +62,25 @@ MAX_ITERATIONS = 4                            # hard cap — never loop forever 
 AGENTS_DIR = pathlib.Path(__file__).resolve().parent.parent / ".agents"
 
 # Heuristics for reading the agent's terminal message (the demo also shows this on screen).
-_PASS_RE = re.compile(r"\b(all tests pass|tests pass|equivalent to (the )?original cobol|0 failed)\b", re.I)
+_PASS_RE = re.compile(
+    r"(all\s+(\d+\s+)?(equivalence\s+)?tests?\b[^.\n]{0,40}\bpass"  # "All 30 Equivalence Tests: PASS"
+    r"|\ball\s+tests?\s+pass(ed)?\b"
+    r"|\b0\s+failed\b"
+    r"|\b\d+\s+passed,\s*0\s+failed\b"
+    r"|\b100\s*%\s*(success|pass)"
+    r"|\bequivalent to (the )?original cobol\b"
+    r"|\bbyte[\s\-]for[\s\-]byte\s+(identical|equivalent)\b)",
+    re.I,
+)
+# Clear failure signals VETO a pass (handles negations like "not equivalent").
+_FAIL_RE = re.compile(
+    r"\b([1-9]\d*\s+(tests?\s+)?failed"
+    r"|did\s*n[o']?t\s+pass"
+    r"|not\s+(byte[\s\-]for[\s\-]byte\s+)?(equivalent|identical)"
+    r"|still\s+(red|failing)"
+    r"|could\s+not\s+(reach|achieve|pass))",
+    re.I,
+)
 _FORGE_RE = re.compile(r"(\.agents/skills/[\w\-./]+SKILL\.md)", re.I)
 
 
@@ -224,6 +242,9 @@ def extract_environment_id(interaction) -> str | None:
 
 
 def _tests_passed(output_text: str) -> bool:
+    # A clear failure signal vetoes a pass (e.g. "2 failed", "not equivalent").
+    if _FAIL_RE.search(output_text):
+        return False
     return bool(_PASS_RE.search(output_text))
 
 
