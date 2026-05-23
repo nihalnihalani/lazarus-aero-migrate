@@ -35,6 +35,14 @@ for p in (str(SRC_DIR), str(REPO_ROOT)):
         sys.path.remove(p)
     sys.path.insert(0, p)
 
+# Import the REAL installed SDK interactions types ONCE at module load — BEFORE the agent_mod
+# fixture stubs out `google.genai` — and cache them. This is the source-of-truth shape the
+# breadcrumb regression guard (DA L17) builds against. None when the SDK isn't installed.
+try:
+    import google.genai._interactions.types as _SDK_ITX_TYPES  # noqa: E402
+except Exception:  # SDK absent / older layout -> the SDK-types guard skips
+    _SDK_ITX_TYPES = None
+
 
 # --------------------------------------------------------------------------
 # fixtures + fakes (mirror tests/test_agent.py so the two files agree on shapes)
@@ -288,79 +296,138 @@ def test_grounding_env_flag_default_off(agent_mod, monkeypatch):
 def test_grounding_breadcrumbs_from_search_and_url_steps(agent_mod):
     """The grounding capability is PROVABLE in the live trace: google_search_call /
     url_context_call (+ their results) yield breadcrumbs. These only appear when grounding
-    is exercised, so they're the stream-side evidence the devil's-advocate can point to."""
+    is exercised, so they're the stream-side evidence the devil's-advocate can point to.
+
+    Uses the REAL installed-SDK field shapes (google.genai._interactions.types):
+      * GoogleSearchCallArguments.queries — List[str], PLURAL (not .query).
+      * URLContextCallArguments.urls      — List[str], PLURAL (not .url).
+      * GoogleSearchResultStep.result     — List[GoogleSearchResult].
+      * URLContextResultStep.result       — List[URLContextResult] (.url + .status).
+    A genuine grounding call sets queries/urls (plural); the old singular .query/.url
+    read rendered NOTHING for real grounding — that's the bug this test now guards."""
     search_call = types.SimpleNamespace(
         type="google_search_call",
-        arguments=types.SimpleNamespace(query="COBOL ROUNDED rounding mode"))
-    assert agent_mod._tool_breadcrumb(search_call) == "🔎 COBOL ROUNDED rounding mode"
+        arguments=types.SimpleNamespace(queries=["COBOL ROUNDED rounding mode", "PIC 9V99"]))
+    crumb = agent_mod._tool_breadcrumb(search_call)
+    assert crumb.startswith("🔎 ")
+    assert "COBOL ROUNDED rounding mode" in crumb and "PIC 9V99" in crumb
 
-    search_res = types.SimpleNamespace(type="google_search_result", result="3 results found")
-    assert agent_mod._tool_breadcrumb(search_res).startswith("🔎 ✓")
+    search_res = types.SimpleNamespace(
+        type="google_search_result",
+        result=[types.SimpleNamespace(search_suggestions=["a"]),
+                types.SimpleNamespace(search_suggestions=["b"]),
+                types.SimpleNamespace(search_suggestions=["c"])])
+    assert agent_mod._tool_breadcrumb(search_res) == "🔎 ✓ 3 results"
 
     url_call = types.SimpleNamespace(
         type="url_context_call",
-        arguments=types.SimpleNamespace(url="https://gnucobol.sourceforge.io/"))
+        arguments=types.SimpleNamespace(urls=["https://gnucobol.sourceforge.io/"]))
     assert agent_mod._tool_breadcrumb(url_call) == "🌐 https://gnucobol.sourceforge.io/"
 
-    url_res = types.SimpleNamespace(type="url_context_result", result="GnuCOBOL Manual")
-    assert agent_mod._tool_breadcrumb(url_res).startswith("🌐 ✓")
+    url_res = types.SimpleNamespace(
+        type="url_context_result",
+        result=[types.SimpleNamespace(url="https://gnucobol.sourceforge.io/",
+                                      status="URL_RETRIEVAL_STATUS_SUCCESS")])
+    crumb = agent_mod._tool_breadcrumb(url_res)
+    assert crumb.startswith("🌐 ✓")
+    assert "gnucobol.sourceforge.io" in crumb
+
+
+def test_grounding_breadcrumbs_use_real_sdk_types(agent_mod):
+    """REGRESSION GUARD (DA L17): build the ACTUAL SDK step types (model-validated from the
+    real wire shape) and assert the breadcrumb renders the queries/urls. This is the test
+    whose absence let the singular-field bug slip — the old tests only checked the prompt
+    preamble, never a real call/result shape. Built via model_validate so pydantic enforces
+    the genuine arguments.queries / arguments.urls / result[].url+status fields."""
+    if _SDK_ITX_TYPES is None:
+        pytest.skip("google.genai._interactions.types not importable in this SDK")
+    it = _SDK_ITX_TYPES
+
+    # NOTE: the real SDK content classes are *CallContent / *ResultContent (there is NO
+    # *Step type — the step's .type + .arguments/.result are what _tool_breadcrumb reads).
+    sc = it.GoogleSearchCallContent.model_validate({
+        "id": "c1", "type": "google_search_call",
+        "arguments": {"queries": ["COBOL ROUNDED rounding mode"]}})
+    assert sc.arguments.queries == ["COBOL ROUNDED rounding mode"]   # real SDK field, plural
+    assert agent_mod._tool_breadcrumb(sc) == "🔎 COBOL ROUNDED rounding mode"
+
+    uc = it.URLContextCallContent.model_validate({
+        "id": "c2", "type": "url_context_call",
+        "arguments": {"urls": ["https://example.com/cobol"]}})
+    assert uc.arguments.urls == ["https://example.com/cobol"]        # real SDK field, plural
+    assert agent_mod._tool_breadcrumb(uc) == "🌐 https://example.com/cobol"
+
+    ur = it.URLContextResultContent.model_validate({
+        "call_id": "c2", "type": "url_context_result",
+        "result": [{"url": "https://example.com/cobol", "status": "success"}]})
+    crumb = agent_mod._tool_breadcrumb(ur)
+    assert crumb.startswith("🌐 ✓")
+    assert "example.com/cobol" in crumb and "success" in crumb
 
 
 def test_grounding_breadcrumbs_tolerate_dict_and_flat_shapes(agent_mod):
-    """Defensive: the SDK may surface a raw-dict step or a flat field — breadcrumbs still
-    recover the query/url (never raise)."""
-    # dict step with nested arguments
+    """Defensive: the SDK may surface a raw-dict step — breadcrumbs still recover the
+    queries/urls (never raise). Plural list keys, matching the real SDK arguments."""
+    # dict step with nested plural arguments
     assert agent_mod._tool_breadcrumb(
-        {"type": "google_search_call", "arguments": {"query": "PIC 9V99 de-editing"}}
+        {"type": "google_search_call", "arguments": {"queries": ["PIC 9V99 de-editing"]}}
     ) == "🔎 PIC 9V99 de-editing"
-    # flat field directly on the step
     assert agent_mod._tool_breadcrumb(
-        types.SimpleNamespace(type="url_context_call", url="https://example.com/cobol")
+        {"type": "url_context_call", "arguments": {"urls": ["https://example.com/cobol"]}}
     ) == "🌐 https://example.com/cobol"
+    # a call with no arguments still yields a non-None placeholder (never raises)
+    assert agent_mod._tool_breadcrumb(
+        types.SimpleNamespace(type="google_search_call", arguments=None)) == "🔎 (search)"
 
 
 # ==========================================================================
 # 2. THINKING_LEVEL  (task #6, env LAZARUS_THINKING default "medium")
 # ==========================================================================
-# Landed contract (agent._thinking_level + _create_interaction_stream):
+# Landed contract (agent._thinking_level + _create_interaction_stream), corrected to the
+# REAL installed-SDK agent-path shape (DA L18; verified against
+# google.genai._interactions.types):
 #   * env LAZARUS_THINKING. _THINKING_LEVELS = {minimal, low, high} — note "medium" is
 #     DELIBERATELY EXCLUDED: it IS the runtime default, so sending it would needlessly break
 #     the byte-identical guarantee. UNSET / "medium" / "off" / "none" / "default" / any
-#     unrecognized value => _thinking_level() is None => create() gets NO generation_config
+#     unrecognized value => _thinking_level() is None => create() gets NO agent_config
 #     (byte-identical to the shipped call).
 #   * an explicit level that genuinely DIFFERS from the default (minimal|low|high) => OPT-IN:
-#     the create() call carries generation_config = {"thinking_config": {"thinking_level": <lvl>}}.
+#     the AGENT-path create() carries agent_config = {"type": "dynamic", "thinking_level": <lvl>}.
+#     (The agent interaction params expose `agent_config`, NOT `generation_config`, which is
+#     MODEL-path only; thinking_level is FLAT — there is no nested thinking_config in the
+#     interactions types. qa proved the runtime rejects generation_config on the agent path.)
 #   * if the managed-agent runtime rejects the thinking-bearing call, the impl sets
-#     THINKING_REJECTED and retries WITHOUT generation_config so the run still completes.
-def _gen_config_from_call(call):
-    """Recover whatever the impl used to carry generation knobs, however nested."""
-    if "generation_config" in call:
-        return call["generation_config"]
+#     THINKING_REJECTED and retries WITHOUT agent_config so the run still completes.
+def _thinking_cfg_from_call(call):
+    """Recover the agent-path thinking config the impl attached, or None if it sent none."""
+    if "agent_config" in call:
+        return call["agent_config"]
     eb = call.get("extra_body") or {}
-    if isinstance(eb, dict) and "generation_config" in eb:
-        return eb["generation_config"]
+    if isinstance(eb, dict) and "agent_config" in eb:
+        return eb["agent_config"]
     return None
 
 
-def test_thinking_unset_sends_no_generation_config(agent_mod, tmp_path):
-    """Default (env UNSET, cleared by the autouse fixture) => NO generation_config anywhere.
+def test_thinking_unset_sends_no_agent_config(agent_mod, tmp_path):
+    """Default (env UNSET, cleared by the autouse fixture) => NO agent_config anywhere.
 
     This is THE byte-identical-to-shipped case for Feature 2: with the flag off, the
-    create() call must look exactly like today's (no generation_config key at all).
+    create() call must look exactly like today's (no agent_config / generation_config key).
     """
     cobol = _write_cobol(tmp_path)
     client = _green_client()
     agent_mod.migrate(client, str(cobol))
     for call in client.interactions.calls:
-        assert _gen_config_from_call(call) is None, \
-            "unset LAZARUS_THINKING must not emit a generation_config (identical to today)"
+        assert _thinking_cfg_from_call(call) is None, \
+            "unset LAZARUS_THINKING must not emit an agent_config (identical to today)"
+        assert "generation_config" not in call
 
 
 @pytest.mark.parametrize("sentinel", ["medium", "off", "none", "default", "bogus-level", ""])
-def test_thinking_sentinel_values_send_no_generation_config(agent_mod, tmp_path,
-                                                            monkeypatch, sentinel):
+def test_thinking_sentinel_values_send_no_agent_config(agent_mod, tmp_path,
+                                                       monkeypatch, sentinel):
     """medium (==runtime default), off/none/default, any unrecognized value, and empty all
-    mean 'send nothing' — they keep the call byte-identical to today (no generation_config).
+    mean 'send nothing' — they keep the call byte-identical to today (no agent_config).
     Including "medium" here is the load-bearing case: opting into the default must NOT break
     the byte-identical guarantee."""
     monkeypatch.setenv("LAZARUS_THINKING", sentinel)
@@ -368,25 +435,29 @@ def test_thinking_sentinel_values_send_no_generation_config(agent_mod, tmp_path,
     client = _green_client()
     agent_mod.migrate(client, str(cobol))
     for call in client.interactions.calls:
-        assert _gen_config_from_call(call) is None, \
-            f"LAZARUS_THINKING={sentinel!r} must be a no-op (no generation_config)"
+        assert _thinking_cfg_from_call(call) is None, \
+            f"LAZARUS_THINKING={sentinel!r} must be a no-op (no agent_config)"
 
 
 @pytest.mark.parametrize("level", ["minimal", "low", "high"])
 def test_thinking_explicit_level_carries_exact_shape(agent_mod, tmp_path, monkeypatch, level):
     """A non-default level (minimal|low|high) opts in and reaches the SDK as the EXACT
-    documented shape: generation_config = {"thinking_config": {"thinking_level": <level>}}.
+    agent-path shape: agent_config = {"type": "dynamic", "thinking_level": <level>} — FLAT
+    thinking_level, no nested thinking_config, NOT generation_config (the MODEL-path key).
     ("medium" is excluded — it equals the runtime default and stays a no-op.)"""
     monkeypatch.setenv("LAZARUS_THINKING", level)
     cobol = _write_cobol(tmp_path)
     client = _green_client()
     agent_mod.migrate(client, str(cobol))
 
-    cfgs = [_gen_config_from_call(c) for c in client.interactions.calls]
+    cfgs = [_thinking_cfg_from_call(c) for c in client.interactions.calls]
     cfgs = [c for c in cfgs if c]
-    assert cfgs, f"LAZARUS_THINKING={level} should have emitted a generation_config"
+    assert cfgs, f"LAZARUS_THINKING={level} should have emitted an agent_config"
     for cfg in cfgs:
-        assert cfg == {"thinking_config": {"thinking_level": level}}
+        assert cfg == {"type": "dynamic", "thinking_level": level}
+    # never the MODEL-path generation_config, and never nested
+    for c in client.interactions.calls:
+        assert "generation_config" not in c
 
 
 def test_thinking_case_insensitive(agent_mod, tmp_path, monkeypatch):
@@ -395,16 +466,17 @@ def test_thinking_case_insensitive(agent_mod, tmp_path, monkeypatch):
     cobol = _write_cobol(tmp_path)
     client = _green_client()
     agent_mod.migrate(client, str(cobol))
-    cfgs = [c for c in (_gen_config_from_call(c) for c in client.interactions.calls) if c]
+    cfgs = [c for c in (_thinking_cfg_from_call(c) for c in client.interactions.calls) if c]
     assert cfgs
-    assert all(c == {"thinking_config": {"thinking_level": "high"}} for c in cfgs)
+    assert all(c == {"type": "dynamic", "thinking_level": "high"} for c in cfgs)
 
 
-def test_thinking_rejection_falls_back_without_generation_config(agent_mod, monkeypatch):
+def test_thinking_rejection_falls_back_without_agent_config(agent_mod, monkeypatch):
     """If the managed-agent runtime rejects the thinking-bearing create(), the driver
-    retries WITHOUT generation_config (graceful no-op), sets THINKING_REJECTED, and the
-    run completes. Proven with a client whose first create() (carrying generation_config)
-    raises a thinking-rejection error and whose retry succeeds."""
+    retries WITHOUT agent_config (graceful no-op), sets THINKING_REJECTED, and the run
+    completes. Proven with a client whose first create() (carrying agent_config) raises a
+    thinking-rejection error and whose retry succeeds. (qa proved the runtime DOES reject
+    every thinking config shape live, so this fallback is the load-bearing path.)"""
     monkeypatch.setenv("LAZARUS_THINKING", "high")
 
     final = types.SimpleNamespace(id="iR", environment_id="envR",
@@ -416,8 +488,9 @@ def test_thinking_rejection_falls_back_without_generation_config(agent_mod, monk
             @staticmethod
             def create(**kwargs):
                 _RejectingClient.interactions.calls.append(kwargs)
-                if "generation_config" in kwargs:
-                    raise ValueError("Unknown field: generation_config.thinking_config")
+                if "agent_config" in kwargs:
+                    # The runtime's real agent-path rejection message (qa live: 400).
+                    raise ValueError("Unknown parameter: agent_config.thinking_level")
                 def _stream():
                     yield types.SimpleNamespace(event_type="interaction.completed",
                                                 interaction=final, interaction_id="iR")
@@ -431,8 +504,8 @@ def test_thinking_rejection_falls_back_without_generation_config(agent_mod, monk
 
     calls = _RejectingClient.interactions.calls
     assert len(calls) == 2                                  # first (rejected) + retry
-    assert "generation_config" in calls[0]                  # the thinking-bearing attempt
-    assert "generation_config" not in calls[1]              # the clean retry
+    assert "agent_config" in calls[0]                       # the thinking-bearing attempt
+    assert "agent_config" not in calls[1]                   # the clean retry
     assert agent_mod.THINKING_REJECTED is True              # flagged for the UI
     assert agent_mod.extract_environment_id(itx) == "envR"  # run still completed
 
