@@ -91,28 +91,60 @@ def make_stream_steps_only(*, env_id, interaction_id, model_text):
         event_type="step.stop",
         step=FakeStep("model_output", model_text),
     )
-    yield types.SimpleNamespace(event_type="interaction.completed", interaction=final)
+    yield types.SimpleNamespace(
+        event_type="interaction.completed", interaction=final,
+        interaction_id=interaction_id,
+    )
+
+
+def make_stream_empty_completed(*, env_id, interaction_id, model_text):
+    """The REAL API shape: interaction.completed ships `event.interaction` "with empty
+    outputs to reduce the payload size" (verbatim, findings-agents.md). So the model
+    text is NOT on the completed event — it must come from streamed step.delta and/or
+    a follow-up client.interactions.get(interaction_id). Here the deltas carry the text;
+    the completed event's interaction has EMPTY steps + no output_text (but keeps
+    environment_id + id). interactions.get(id) returns the fully-populated object."""
+    # stream the model text as deltas (the live-trace path)
+    for ch in (model_text,):
+        yield types.SimpleNamespace(event_type="step.delta",
+                                    delta=types.SimpleNamespace(text=ch),
+                                    interaction_id=interaction_id)
+    empty = types.SimpleNamespace(id=interaction_id, environment_id=env_id, steps=[])
+    yield types.SimpleNamespace(event_type="interaction.completed", interaction=empty,
+                                interaction_id=interaction_id)
 
 
 class FakeInteractions:
     def __init__(self, scripted):
         self._scripted = list(scripted)  # list of dicts describing each turn
         self.calls = []                  # records kwargs of each create()
+        self.get_calls = []              # records ids passed to get()
 
     def create(self, **kwargs):
         self.calls.append(kwargs)
         spec = self._scripted[len(self.calls) - 1]
         if spec.get("steps_only"):
             return make_stream_steps_only(
-                env_id=spec["env_id"],
-                interaction_id=spec["interaction_id"],
+                env_id=spec["env_id"], interaction_id=spec["interaction_id"],
+                model_text=spec["model_text"],
+            )
+        if spec.get("empty_completed"):
+            return make_stream_empty_completed(
+                env_id=spec["env_id"], interaction_id=spec["interaction_id"],
                 model_text=spec["model_text"],
             )
         return make_stream(
-            env_id=spec["env_id"],
-            interaction_id=spec["interaction_id"],
-            model_text=spec["model_text"],
-            deltas=spec.get("deltas", ()),
+            env_id=spec["env_id"], interaction_id=spec["interaction_id"],
+            model_text=spec["model_text"], deltas=spec.get("deltas", ()),
+        )
+
+    def get(self, interaction_id):
+        """Authoritative final fetch — returns the fully-populated interaction."""
+        self.get_calls.append(interaction_id)
+        spec = next(s for s in self._scripted if s["interaction_id"] == interaction_id)
+        return FakeInteraction(
+            id=interaction_id, environment_id=spec["env_id"],
+            steps=[FakeStep("model_output", spec["model_text"])],
         )
 
 
@@ -238,6 +270,44 @@ def test_migrate_single_pass_when_tests_pass(agent_mod, tmp_path):
     assert first["stream"] is True
     assert first["extra_body"] == {"environment": "remote"}
     assert result.environment_id == "env1"
+
+
+# --------------------------------------------------------------------------
+# LIVE-PATH BUG: interaction.completed ships EMPTY outputs (payload-size).
+# extract_output_text must NOT read empty terminal .steps; it must use the
+# stream-accumulated text and/or the authoritative interactions.get() fetch.
+# --------------------------------------------------------------------------
+def test_extract_output_text_when_completed_event_is_empty(agent_mod, tmp_path):
+    """Real API: the completed event's interaction has EMPTY steps. migrate() must still
+    recover the model text (from streamed deltas) and detect pass/forge correctly."""
+    cobol = tmp_path / "p.cob"
+    cobol.write_text("IDENTIFICATION DIVISION.\n")
+    client = FakeClient([
+        # turn 1: RED + forge; text ONLY in streamed deltas, completed event is empty
+        {"env_id": "env1", "interaction_id": "i1", "empty_completed": True,
+         "model_text": "FAILED unknown idiom. FORGED .agents/skills/numeric-display/SKILL.md"},
+        {"env_id": "env1", "interaction_id": "i2", "empty_completed": True,
+         "model_text": "All tests pass. equivalent to original COBOL."},
+    ])
+    result = agent_mod.migrate(client, str(cobol))
+    assert len(client.interactions.calls) == 2     # forge recovered from streamed text
+    assert result.environment_id == "env1"          # env id still present on completed event
+
+
+def test_get_used_as_authoritative_fetch_after_stream(agent_mod):
+    """_run_interaction performs the authoritative client.interactions.get(id) after the
+    stream (the completed event is empty), and the returned object exposes the fetched
+    steps' text — no double-fetch needed by extract_output_text."""
+    client = FakeClient([
+        {"env_id": "env9", "interaction_id": "i9", "empty_completed": True,
+         "model_text": "All tests pass. equivalent to original COBOL."},
+    ])
+    itx = agent_mod._run_interaction(client, input_text="x", environment="remote")
+    assert client.interactions.get_calls == ["i9"]            # one authoritative fetch
+    # the fetched object's real text is available, env id preserved
+    assert "tests pass" in agent_mod.extract_output_text(itx).lower()
+    assert agent_mod.extract_environment_id(itx) == "env9"
+    assert client.interactions.get_calls == ["i9"]            # no second fetch
 
 
 # --------------------------------------------------------------------------

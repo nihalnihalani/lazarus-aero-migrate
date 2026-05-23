@@ -1,8 +1,9 @@
 """Tests for the FastAPI/SSE bridge (src/server.py) — all runnable WITHOUT a key.
 
-Covers what's verifiable offline: the health endpoint, the explicit no-key 503
-(never fake data), and that a (stubbed) agent run is forwarded to the browser as
-the canonical SSE event sequence. The live Gemini path itself is validated by
+Covers what's verifiable offline: health, the explicit no-key 503 (never fake
+data), and that a (stubbed) agent run is forwarded over the run_id contract that
+web/src/live.js consumes:  POST /api/migrate -> {run_id}; GET /api/stream/{run_id}
+-> canonical SSE events. The live Gemini path itself is validated by
 scripts/smoke_test.py once the key is provisioned.
 """
 import json
@@ -35,19 +36,24 @@ def test_health_reports_agent_and_key_flag(monkeypatch):
 def test_migrate_without_key_returns_503(monkeypatch):
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     client = TestClient(server.app)
-    r = client.get("/api/migrate")
+    r = client.post("/api/migrate", json={"cobol": "x", "filename": "x.cob"})
     assert r.status_code == 503
     assert "GEMINI_API_KEY" in r.json()["error"]
 
 
-def test_migrate_streams_canonical_events(monkeypatch):
-    """A stubbed agent run is forwarded as phase/step/forge/pytest/done events."""
+def test_stream_unknown_run_id_404(monkeypatch):
+    client = TestClient(server.app)
+    with client.stream("GET", "/api/stream/does-not-exist") as resp:
+        assert resp.status_code == 404
+
+
+def test_post_then_stream_emits_canonical_events(monkeypatch):
+    """POST -> run_id, then GET /api/stream/{run_id} forwards canonical events."""
     monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-real")
     monkeypatch.setattr(agent_mod.genai, "Client", lambda *a, **k: object())
     monkeypatch.setattr(agent_mod, "ensure_agent", lambda client: None)
 
     def fake_migrate(client, path):
-        # Exercise the hooks the bridge overrides (mirrors real migrate()).
         agent_mod.emit_iteration(1, agent_mod.MAX_ITERATIONS)
         agent_mod.emit_to_ui("Recovered business rules; wrote payroll.py ...")
         return SimpleNamespace()
@@ -60,15 +66,21 @@ def test_migrate_streams_canonical_events(monkeypatch):
     monkeypatch.setattr(agent_mod, "extract_environment_id", lambda r: "env-abc123")
 
     client = TestClient(server.app)
+    start = client.post("/api/migrate", json={"cobol": "IDENTIFICATION DIVISION.",
+                                              "filename": "payroll.cob"})
+    assert start.status_code == 200
+    run_id = start.json()["run_id"]
+    assert run_id
+
     seen = []
-    with client.stream("GET", "/api/migrate") as resp:
+    with client.stream("GET", f"/api/stream/{run_id}") as resp:
         assert resp.status_code == 200
         for line in resp.iter_lines():
             s = line.decode() if isinstance(line, (bytes, bytearray)) else line
             if s and s.startswith("data:"):
                 ev = json.loads(s[len("data:"):].strip())
                 seen.append(ev.get("type"))
-                if ev.get("type") == "done":
+                if ev.get("type") in ("done", "error"):
                     break
 
     assert "phase" in seen     # enforced iteration counter + lifecycle
