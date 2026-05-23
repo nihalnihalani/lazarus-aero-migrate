@@ -1074,3 +1074,43 @@ reword — flagged to team-lead).
   consult, not the driver of the migration. If qa picks a sample with a genuinely obscure idiom (where the
   agent CAN'T just compile its way out), grounding's value would show more clearly — worth trying for a
   stronger #1 proof.
+
+## L26 — RECONCILE: function_call/function_result blocks appeared LIVE (4 each) vs RESEARCH §3 "function_calling not supported" — needs the actual tool NAMES before I confirm "internal routing"
+
+- **Apparent contradiction:** qa reports 4 function_call + 4 function_result step blocks on a live run.
+  RESEARCH §3 quotes the antigravity doc verbatim: *"file_search, computer_use, google_maps, function_calling
+  and mcp are not yet supported."* How do function_call blocks appear if function_calling "isn't supported"?
+- **Resolution (almost certainly correct, but MUST be checked against the data, not assumed):**
+  "function_calling not supported" = the USER cannot register their own custom functions for the agent to
+  call (the user-facing feature). It does NOT mean the runtime never emits the `function_call` STEP TYPE. The
+  agent's OWN internal tools can be surfaced over the generic function_call/function_result envelope. SDK
+  evidence: `FunctionCallStep.name` = "the name of the TOOL to call"; `FunctionResultStep.name` = "the name
+  of the TOOL that was called" + call_id + is_error. code_execution / google_search / url_context each have
+  their OWN dedicated step types, so function_call is the generic envelope for whatever lacks a bespoke type.
+- **WHAT I REQUIRE BEFORE WRITING THIS INTO DOCS (the L16 discipline, inverted — don't wave "benign"
+  through either):** I will NOT assert "internal tool routing, not user-exposed function calling" on a
+  relayed conclusion — I have not SEEN the blocks. qa must paste the 4 function_call `name` + `arguments`
+  values (and function_result `name`s). Branches:
+  * names = INTERNAL ops (filesystem/list/read/search-ish; no user-registered function) → CONFIRMS internal
+    routing; our docs stay accurate (we never claimed user function-calling). Add ONE honest clarifying line.
+  * names look like USER/CUSTOM functions, or LAZARUS appears to register tools → CONTRADICTS §3 + our
+    "explicitly not used" claim → STOP, escalate, fix the claim.
+- **Until I see the names: provisional read = internal routing (consistent), but UNCONFIRMED.**
+
+## L27 — RELAYED "VERIFIED" ≠ EVIDENCE I'VE SEEN: #1 and #3 live proofs are NOT on my filesystem yet
+team-lead relays qa's #1 grounding=VERIFIED (real google_search_call/result blocks) and #3=VERIFIED
+(sentinel-token fresh-run discovery). My gate requires the BLOCKS, not the conclusion. As of this writing the
+ONLY artifact on my box is qa_capture_ground.out.txt (model-output text only — the inconclusive one from
+L17/L25; it has 0 google_search prose detail and no histogram). I have NOT seen: the google_search_call
+histogram/grounding_tool_count, the sentinel-token discovery transcript, or the function_call names.
+- #3 cross-run: the sentinel-token fresh-run discovery IS exactly the proof I asked for AND it matches the
+  prior live memory [[skill-mount-discovery-live]] (ZARFLAX-7731) — so I can accept #3's DISCOVERY half on
+  that corroboration. Residual: the BANKING half (agent echoes the SKILL.md body on a real forge so
+  _bank_forged_skill_from_output captures it) — confirm that fired, or state banking is mechanism-verified
+  (my drive) + discovery-verified (sentinel) with the echo dependency noted.
+- #1 grounding: I need the actual google_search_call block(s) + grounding_tool_count to move it to VERIFIED.
+  A relayed "qa captured real blocks" is encouraging but is not the receipt; given L25 (the agent mostly
+  compiles rather than searches on payroll), I specifically need to see count>0 with the tool name.
+**Verdict: #2 + #4(code/CLI) + regression are mine-verified; #1, #3-banking, and the L26 function_call
+reconciliation are RELAYED-but-unseen → I hold those until the raw blocks land on my filesystem (or qa pastes
+them).** Not distrust of qa — it's the difference between "told" and "verified," which is the whole job.
