@@ -268,11 +268,39 @@ now provably true: the agent cannot fake equivalence past the oracle. STRONG.
   `_setWorking({action})`; the renderer advances the banner + trace + phase rail off that. So the
   UI moves IFF the AGENT streams intermediate `step.delta` text during the run. If the agent goes
   dark until the end, the UI is stuck regardless of the wiring.
-- **Verdict: OPEN — needs qa to confirm live whether the UI progresses or freezes.** If it
-  progresses: the live narrative works. If it freezes: add live-progress surfacing BEFORE the slot
-  — a visible elapsed timer + heartbeat ("still working — N s") + ensure step.delta chunks render
-  as they arrive, so the screen is provably alive. team-lead is chasing this with qa. This is the
-  #1 remaining risk for the chosen strictly-live demo.
+- **CONFIRMED FROZEN (qa's full live stream + my raw-stream analysis) → FIX LANDING (task #6).**
+  I analyzed `/tmp/sse_full.jsonl` (153 events, 19-min run): the 134 `step` events are all chunks
+  of ONE end-block message ("I have completed the recovery, translation, verification, and skill
+  forging…") — the agent streams NOTHING incrementally, then bursts at the end. Phases emitted:
+  only `ingest, ingest, forge, forge, forge, reload, done` (no recover/translate/oracle/test). So
+  the screen WAS effectively frozen for ~19 min, then everything appeared at once. L11 = REAL.
+  - **FIX (frontend-eng, working tree, task #6):** the WORKING banner now has an always-advancing
+    elapsed timer (`_startHeartbeat`/`_tickHeartbeat`, 1s setInterval, pure clock — renderer.js:136)
+    + a reassurance line after 6s of silence ("Real migrations take a few minutes — the agent is
+    working in a live sandbox"). HONEST: it doesn't fake phase progress; it proves the app is alive
+    with a real clock. The code comment cites this exact root cause.
+- **Verdict: RESOLVED (frozen-screen bar cleared) — with an honest caveat.** The heartbeat clears
+  the "looks hung" risk (the hard requirement). CAVEAT: it makes the screen ALIVE, not the run
+  watchable — the agent genuinely emits no incremental progress, so the experience is ~minutes of
+  [spinner + ticking timer + reassurance + static "Iteration 1/4"] then an end-burst. That's honest
+  (not frozen, not faked), but it's a long low-information stretch; the "breadcrumbs" half of task #6
+  + the narration talk-track must carry it. Acceptable for sign-off IF the heartbeat lands and the
+  demo narrative sets the expectation. (A deeper fix — getting the agent to stream incremental
+  milestones — is out of scope for the slot; the prompt could ask it to print progress markers, but
+  that's not guaranteed.)
+
+## L12 — GET /api/download/{run_id} returns 404 after the stream ends  — CONTAINED (inline path works)
+
+- **EVIDENCE (qa):** server.py:470 pops `_RUNS[run_id]` when the SSE stream completes (one-subscriber
+  cleanup, pre-existing design). So after the run, GET /api/download/{run_id} → 404. qa confirmed
+  the live UI does NOT hit that endpoint — `live.js` prefers the INLINE `content` carried on the
+  `download` event (verified: 2078B inline, byte-identical to the diff's right side), so the Download
+  button arms from the event, not the endpoint.
+- **Verdict: CONTAINED, not blocking.** The demo's download works (inline). But the endpoint being
+  dead post-stream is a latent fragility: any path that relies on GET /api/download (e.g. a judge
+  hitting the URL, or contract-B clients) gets 404. Cheap fix if desired: keep `run["download"]` in
+  a short-TTL cache after `_RUNS.pop`, or don't pop until download is fetched. Flagging for the
+  record; not a sign-off blocker since the live UI uses inline content.
 
 ---
 
