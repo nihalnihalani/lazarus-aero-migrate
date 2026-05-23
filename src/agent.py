@@ -696,16 +696,20 @@ def _looks_like_thinking_rejection(exc: Exception) -> bool:
     agent path; the SHIPPED agent_config={"type":"dynamic","thinking_level": …} shape is
     ACCEPTED but the depth is IGNORED (qa live: thought-token counts don't track the level —
     high ≈ 2096 < minimal ≈ 2408). This heuristic + the retry are DEFENSIVE-ONLY insurance for
-    a future runtime that starts rejecting the param — NOT the observed live behavior. We can't
-    rely on a specific exception type from a dev box, so we match the message defensively and
-    treat a thinking-shaped error as "retry without it"; the retry re-raises if it ALSO fails,
-    so a genuine unrelated error still surfaces (it won't recur once we drop agent_config).
+    a future runtime that starts rejecting the param — NOT the observed live behavior (the
+    shipped shape returns 200, so this branch is dead on the live path today).
+
+    NARROW BY DESIGN (DA L30 hardening): we require the error message to name the
+    thinking/agent_config FIELD itself — NOT a generic "invalid argument"/"unsupported"
+    phrase alone. Otherwise a TRANSIENT unrelated error (a flaky 503/timeout/rate-limit whose
+    text happens to contain such a phrase) could be swallowed, the retry-without-agent_config
+    could then SUCCEED because the transient cleared, and we'd mask a real error AND falsely
+    set THINKING_REJECTED. Tying the match to a config-field token avoids that.
     """
     msg = str(exc).lower()
     return any(k in msg for k in (
-        "thinking", "agent_config", "agentconfig", "generation_config", "generationconfig",
-        "unknown field", "unknown parameter", "unexpected", "invalid argument",
-        "not supported", "unsupported",
+        "thinking_level", "thinking_config", "agent_config", "agentconfig",
+        "generation_config", "generationconfig",
     ))
 
 
