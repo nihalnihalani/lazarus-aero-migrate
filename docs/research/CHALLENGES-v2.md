@@ -392,10 +392,16 @@ verdict provably follows the oracle, not the agent's claim; tests honestly scope
 Split per team-lead, and it matches my own verification cleanly:
 
 **✅ CODE / DEFINITION-OF-DONE — SIGNED OFF (2026-05-23).** A completed real-key live run
-(2f307f10, env 4380af6e, fixed path) drives EVERY panel from REAL agent work: 5 business rules,
-oracle banner, COBOL↔Python diff (right-side == download, byte-identical), structured pytest
-(GREEN, 15 real per-case cases), forge+reload, download of the agent's REAL runnable module
-(Decimal+ROUND_HALF_UP; qa ran it → exact COBOL bytes), verdict EQUIVALENT. Honesty is verified
+drives EVERY panel from REAL agent work: business rules, oracle banner, COBOL↔Python diff
+(right-side == download, byte-identical), structured pytest (GREEN, real per-case cases),
+forge+reload, download of the agent's REAL runnable module (Decimal+ROUND_HALF_UP; qa ran it →
+exact COBOL bytes), verdict EQUIVALENT.
+**RUN-ID CORRECTION (per qa):** the DECISIVE fully-populated run to cite is **f9e71470** (env
+2b01d46d, on **ea6fe12** — post the tarball-independent fix), confirmed by qa + my independent read
+of /tmp/sse_full4.jsonl. An EARLIER run **2f307f10** (pre-ea6fe12) had diff/download EMPTY due to
+the tarball gate — do NOT cite it as the complete run. My L11 frozen-screen analysis used a
+pre-fix run's raw stream (still valid for that finding); the COMPLETENESS sign-off rests on
+f9e71470. Honesty is verified
 from every angle: the verdict tracks the differential oracle, NOT the agent's self-report (wrong
 module → RED; crash → explicit RED; both tested + independently driven by me); provenance is
 truthfully labeled (agent_pytest / differential_oracle / model_output / files_api); no panel shows
