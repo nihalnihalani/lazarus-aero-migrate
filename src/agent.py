@@ -5,35 +5,57 @@ Single Gemini 3.5 Flash Managed Agent (Antigravity) that migrates COBOL -> teste
 Python, proves equivalence against the original COBOL (differential oracle), and
 forges its own SKILL.md when it meets an unknown idiom.
 
-Verified against the live Gemini API docs (May 2026):
-  - Interactions API requires  google-genai >= 1.55.0
-  - Managed agent id:          "antigravity-preview-05-2026"  (powered by Gemini 3.5 Flash)
-  - Create custom agent:       client.agents.create(id, base_agent, system_instruction, base_environment)
-  - Run:                       client.interactions.create(agent, input, environment, [previous_interaction_id], [stream])
-  - environment:               "remote" (fresh sandbox) -> reuse interaction.environment_id thereafter
-  - Sandbox:                   Ubuntu, Python 3.12, Node 22; pip/npm install at runtime; files persist per env id
-  - Unsupported by this agent: mcp, computer_use, function_calling, file_search, structured output
-Refs: ai.google.dev/gemini-api/docs/{managed-agents-quickstart, custom-agents, agent-environment, antigravity-agent}
+Reconciled to the VERIFIED Managed Agents / Interactions API surface (see
+docs/RESEARCH_MANAGED_AGENTS.md, consolidated 2026-05-23). Key facts this code
+depends on:
+  - SDK:               google-genai >= 2.0.0   (managed-agents path; NOT the 1.55 model path)
+  - Base agent id:     "antigravity-preview-05-2026"  (Gemini 3.5 Flash; same string for
+                       agent= and base_agent=)
+  - Create agent:      client.agents.create(id, base_agent, system_instruction, base_environment)
+  - Run interaction:   client.interactions.create(agent=..., input=..., stream=...,
+                       extra_body={"environment": "remote" | <env_id> | {type,sources}})
+                       -> environment is passed via extra_body, NOT a top-level kwarg.
+  - State threading:   reuse interaction.environment_id (files + packages persist).
+                       previous_interaction_id is the MODEL path's state carrier and is
+                       UNVERIFIED on the agent path, so we thread state via environment_id.
+  - Streaming events:  event.event_type in {step.start, step.delta, step.stop,
+                       interaction.created, interaction.completed, interaction.status_update,
+                       error}; step.delta carries event.delta.text; the completed event
+                       carries the final interaction (with .steps, .id, .environment_id).
+  - Reading output:    iterate interaction.steps for the model_output step (the agent
+                       resource has no guaranteed .output_text attr).
+
+FORGE beat (SAFE pattern — do NOT rely on silent mid-run auto-reload of an
+agent-authored SKILL.md, which is UNVERIFIED):
+  1. The agent writes .agents/skills/<idiom>/SKILL.md and commits it (persists on disk).
+  2. The retry interaction REUSES the same environment_id so the file is present.
+  3. The retry prompt EXPLICITLY instructs the agent to re-read .agents/skills/ before
+     retrying — we never assume the forged skill is already in context.
 """
 from __future__ import annotations
 
 import argparse
 import pathlib
+import re
 
-from google import genai  # pip install "google-genai>=1.55.0"
+from google import genai  # pip install -U "google-genai>=2.0.0"
 
 AGENT_ID = "lazarus"
-BASE_AGENT = "antigravity-preview-05-2026"   # Gemini 3.5 Flash managed agent
+BASE_AGENT = "antigravity-preview-05-2026"   # Gemini 3.5 Flash managed agent (verified)
 MAX_ITERATIONS = 4                            # hard cap — never loop forever on stage
 
-AGENTS_DIR = pathlib.Path(".agents")
+AGENTS_DIR = pathlib.Path(__file__).resolve().parent.parent / ".agents"
+
+# Heuristics for reading the agent's terminal message (the demo also shows this on screen).
+_PASS_RE = re.compile(r"\b(all tests pass|tests pass|equivalent to (the )?original cobol|0 failed)\b", re.I)
+_FORGE_RE = re.compile(r"(\.agents/skills/[\w\-./]+SKILL\.md)", re.I)
 
 
 def build_base_environment() -> dict:
     """Mount AGENTS.md + any seed SKILL.md files into a fresh remote sandbox.
 
-    base_environment must be an object (not a bare string); `sources` mounts files
-    at the paths the agent auto-discovers (.agents/AGENTS.md, .agents/skills/*/SKILL.md).
+    base_environment is an object (not a bare string); `sources` mounts files at the
+    paths the agent auto-discovers on startup (.agents/AGENTS.md, .agents/skills/*/SKILL.md).
     """
     sources = [
         {
@@ -42,7 +64,7 @@ def build_base_environment() -> dict:
             "content": (AGENTS_DIR / "AGENTS.md").read_text(),
         }
     ]
-    for skill_md in (AGENTS_DIR / "skills").glob("*/SKILL.md"):
+    for skill_md in sorted((AGENTS_DIR / "skills").glob("*/SKILL.md")):
         sources.append(
             {
                 "type": "inline",
@@ -54,7 +76,16 @@ def build_base_environment() -> dict:
 
 
 def ensure_agent(client: genai.Client) -> None:
-    """Create the reusable custom agent once (mounts skills via base_environment)."""
+    """Create the reusable custom agent once (mounts skills via base_environment).
+
+    Idempotent: skips creation if an agent with AGENT_ID already exists.
+    """
+    try:
+        existing = {a.id for a in client.agents.list().agents}
+    except Exception:
+        existing = set()
+    if AGENT_ID in existing:
+        return
     client.agents.create(
         id=AGENT_ID,
         base_agent=BASE_AGENT,
@@ -77,38 +108,120 @@ def _build_prompt(cobol: str) -> str:
         "4. Generate equivalence tests asserting python_output == cobol_output "
         "byte-for-byte; run pytest.\n"
         "5. On failure from an UNKNOWN COBOL idiom, write "
-        ".agents/skills/<idiom>/SKILL.md teaching yourself, commit it, and retry.\n"
+        ".agents/skills/<idiom>/SKILL.md teaching yourself how to handle it, commit it, "
+        "and report the path you wrote.\n"
+        "When done, state clearly whether all equivalence tests PASS.\n"
         f"Stop when tests pass or after {MAX_ITERATIONS} iterations.\n\n"
         f"COBOL:\n```cobol\n{cobol}\n```"
     )
 
 
-def migrate(client: genai.Client, cobol_path: str, environment: str = "remote",
-            previous_interaction_id: str | None = None):
-    """Run the write -> run -> prove -> self-heal loop, streaming steps to the UI.
+def _build_forge_retry_prompt(skill_path: str) -> str:
+    """Follow-up prompt for the FORGE retry turn (SAFE re-read pattern).
 
-    Returns the completed interaction (carries .id, .environment_id, .output_text, .steps).
+    The forged SKILL.md persists on disk in the reused environment, but we do NOT
+    assume it has been auto-reloaded into the agent's instruction context. So we
+    explicitly tell the agent to re-read it (and the rest of .agents/skills/) before
+    re-attempting the translation.
     """
-    cobol = pathlib.Path(cobol_path).read_text()
+    return (
+        "Your previous attempt failed on an unknown COBOL idiom and you forged a new "
+        f"skill at {skill_path}.\n"
+        "That file is on disk in this SAME environment, but it is NOT yet loaded into "
+        "your instructions. Before retrying:\n"
+        f"1. Re-read {skill_path} (e.g. `cat {skill_path}`), and also re-scan "
+        ".agents/skills/ for any other skills you have authored.\n"
+        "2. Apply the technique from that skill to fix the Python translation.\n"
+        "3. Re-run the differential oracle + pytest and report whether all equivalence "
+        "tests now PASS.\n"
+        "If a DIFFERENT unknown idiom appears, forge another "
+        ".agents/skills/<idiom>/SKILL.md and report its path."
+    )
 
+
+def extract_output_text(interaction) -> str:
+    """Return the text of the final model_output step.
+
+    The agent resource has no guaranteed `.output_text`; iterate `steps` and pull the
+    last model_output step's text (verified step shape, RESEARCH §8).
+    """
+    text_parts: list[str] = []
+    for step in getattr(interaction, "steps", None) or []:
+        if getattr(step, "type", None) == "model_output":
+            for part in getattr(step, "content", None) or []:
+                if getattr(part, "type", None) == "text":
+                    text_parts.append(part.text)
+    return "".join(text_parts)
+
+
+def extract_environment_id(interaction) -> str | None:
+    """The env id to reuse on the next turn (carries files + forged skills)."""
+    return getattr(interaction, "environment_id", None)
+
+
+def _tests_passed(output_text: str) -> bool:
+    return bool(_PASS_RE.search(output_text))
+
+
+def _forged_skill_path(output_text: str) -> str | None:
+    m = _FORGE_RE.search(output_text)
+    return m.group(1) if m else None
+
+
+def _run_interaction(client: genai.Client, *, input_text: str, environment):
+    """One streamed interaction. Forwards step.delta text to the UI; returns the
+    completed interaction object (from the interaction.completed event)."""
     stream = client.interactions.create(
         agent=AGENT_ID,
-        input=_build_prompt(cobol),
-        environment=environment,                        # "remote" first; reuse env id next
-        previous_interaction_id=previous_interaction_id,
+        input=input_text,
         stream=True,
+        extra_body={"environment": environment},   # env via extra_body (verified surface)
     )
 
     final = None
     for event in stream:
-        # Live trace: forward incremental deltas to the front-end (SSE/WebSocket).
-        if getattr(event, "event_type", None) == "step.delta":
-            delta = event.delta
-            if getattr(delta, "type", None) == "text":
-                emit_to_ui(delta.text)
-        final = event   # terminal event exposes the completed interaction fields
-
+        et = getattr(event, "event_type", None)
+        if et == "step.delta":
+            delta = getattr(event, "delta", None)
+            text = getattr(delta, "text", None)
+            if text:
+                emit_to_ui(text)
+        elif et == "interaction.completed":
+            final = getattr(event, "interaction", None) or final
     return final
+
+
+def migrate(client: genai.Client, cobol_path: str):
+    """Run the write -> run -> prove -> self-heal loop, streaming steps to the UI.
+
+    Threads state across forge->retry turns via environment_id (files + forged skills
+    persist), capped at MAX_ITERATIONS. Returns the final completed interaction
+    (carries .id, .environment_id, .steps).
+    """
+    cobol = pathlib.Path(cobol_path).read_text()
+
+    interaction = _run_interaction(
+        client, input_text=_build_prompt(cobol), environment="remote"
+    )
+
+    for _ in range(1, MAX_ITERATIONS):
+        output = extract_output_text(interaction)
+        if _tests_passed(output):
+            break
+        skill_path = _forged_skill_path(output)
+        if not skill_path:
+            # Failed but no new skill was forged -> nothing new to re-read; stop.
+            break
+        env_id = extract_environment_id(interaction)
+        # Reuse the SAME environment so the forged SKILL.md is on disk, and explicitly
+        # instruct the agent to re-read it (SAFE pattern; no silent auto-reload).
+        interaction = _run_interaction(
+            client,
+            input_text=_build_forge_retry_prompt(skill_path),
+            environment=env_id,
+        )
+
+    return interaction
 
 
 def emit_to_ui(text: str) -> None:
@@ -126,8 +239,9 @@ def main() -> None:
     result = migrate(client, args.input)
 
     # Persist the environment id so follow-up turns reuse the same sandbox + forged skills:
-    env_id = getattr(result, "environment_id", None)
-    print(f"\n[done] environment_id={env_id} interaction_id={getattr(result, 'id', None)}")
+    env_id = extract_environment_id(result)
+    itx_id = getattr(result, "id", None)
+    print(f"\n[done] environment_id={env_id} interaction_id={itx_id}")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,228 @@
+"""Tests for the LAZARUS Managed Agent driver (src/agent.py).
+
+These exercise the NETWORK-FREE logic of the driver against the verified Managed
+Agents / Interactions API surface (see docs/RESEARCH_MANAGED_AGENTS.md):
+
+  * base_environment construction (mounts AGENTS.md + seed SKILL.md files),
+  * prompt building (initial + the FORGE safe-reload retry prompt),
+  * extracting output text from `steps` (NOT a `.output_text` attr — unverified),
+  * extracting environment_id,
+  * the write -> run -> prove -> forge -> retry loop, with state threaded via
+    environment_id across turns and an explicit re-read of .agents/skills/.
+
+The Gemini client is faked, so nothing here hits the network or needs a key.
+"""
+from __future__ import annotations
+
+import importlib
+import sys
+import types
+from pathlib import Path
+
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+SRC_DIR = REPO_ROOT / "src"
+for p in (str(SRC_DIR), str(REPO_ROOT)):
+    if p in sys.path:
+        sys.path.remove(p)
+    sys.path.insert(0, p)
+
+
+@pytest.fixture
+def agent_mod():
+    """Import src/agent.py with a stubbed `google.genai` so it loads without the SDK."""
+    google_pkg = types.ModuleType("google")
+    genai_mod = types.ModuleType("google.genai")
+
+    class _Client:  # placeholder; tests pass their own fake client into functions
+        def __init__(self, *a, **k):
+            pass
+
+    genai_mod.Client = _Client
+    google_pkg.genai = genai_mod
+    sys.modules["google"] = google_pkg
+    sys.modules["google.genai"] = genai_mod
+
+    sys.modules.pop("agent", None)
+    mod = importlib.import_module("agent")
+    return importlib.reload(mod)
+
+
+# --------------------------------------------------------------------------
+# fakes that mimic the verified Interactions API step/stream shapes (§8)
+# --------------------------------------------------------------------------
+class FakeStep:
+    def __init__(self, step_type, text=""):
+        self.type = step_type
+        self.content = [types.SimpleNamespace(type="text", text=text)]
+
+
+class FakeInteraction:
+    """Mimics a completed interaction: carries id, environment_id, steps."""
+    def __init__(self, *, id, environment_id, steps):
+        self.id = id
+        self.environment_id = environment_id
+        self.steps = steps
+
+
+def make_stream(*, env_id, interaction_id, model_text, deltas=()):
+    """Yield verified-shape SSE events, ending with a completed interaction."""
+    final = FakeInteraction(
+        id=interaction_id,
+        environment_id=env_id,
+        steps=[FakeStep("model_output", model_text)],
+    )
+    for d in deltas:
+        yield types.SimpleNamespace(
+            event_type="step.delta", delta=types.SimpleNamespace(text=d)
+        )
+    yield types.SimpleNamespace(
+        event_type="interaction.completed", interaction=final
+    )
+
+
+class FakeInteractions:
+    def __init__(self, scripted):
+        self._scripted = list(scripted)  # list of dicts describing each turn
+        self.calls = []                  # records kwargs of each create()
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        spec = self._scripted[len(self.calls) - 1]
+        return make_stream(
+            env_id=spec["env_id"],
+            interaction_id=spec["interaction_id"],
+            model_text=spec["model_text"],
+            deltas=spec.get("deltas", ()),
+        )
+
+
+class FakeAgents:
+    def __init__(self):
+        self.created = []
+
+    def create(self, **kwargs):
+        self.created.append(kwargs)
+
+
+class FakeClient:
+    def __init__(self, scripted):
+        self.agents = FakeAgents()
+        self.interactions = FakeInteractions(scripted)
+
+
+# --------------------------------------------------------------------------
+# base_environment construction
+# --------------------------------------------------------------------------
+def test_build_base_environment_mounts_agents_md(agent_mod):
+    env = agent_mod.build_base_environment()
+    assert env["type"] == "remote"
+    targets = [s["target"] for s in env["sources"]]
+    assert ".agents/AGENTS.md" in targets
+    agents_src = next(s for s in env["sources"] if s["target"] == ".agents/AGENTS.md")
+    assert agents_src["type"] == "inline"
+    assert "LAZARUS" in agents_src["content"]
+
+
+# --------------------------------------------------------------------------
+# version pin / base agent id  (verified facts)
+# --------------------------------------------------------------------------
+def test_base_agent_id_is_verified_string(agent_mod):
+    assert agent_mod.BASE_AGENT == "antigravity-preview-05-2026"
+
+
+# --------------------------------------------------------------------------
+# prompt building — initial + FORGE safe-reload retry
+# --------------------------------------------------------------------------
+def test_build_prompt_includes_cobol_and_oracle_steps(agent_mod):
+    prompt = agent_mod._build_prompt("IDENTIFICATION DIVISION.")
+    assert "IDENTIFICATION DIVISION." in prompt
+    assert "differential" in prompt.lower() or "oracle" in prompt.lower()
+
+
+def test_forge_retry_prompt_instructs_explicit_reread(agent_mod):
+    """The SAFE FORGE pattern: the retry prompt MUST explicitly tell the agent to
+    re-read .agents/skills/ (do not rely on silent mid-run auto-reload)."""
+    prompt = agent_mod._build_forge_retry_prompt(".agents/skills/comp-3/SKILL.md")
+    low = prompt.lower()
+    assert ".agents/skills/" in prompt
+    assert "re-read" in low or "read" in low
+    assert "comp-3" in low
+
+
+# --------------------------------------------------------------------------
+# extracting results from the verified step shape (NOT .output_text)
+# --------------------------------------------------------------------------
+def test_extract_output_text_reads_model_output_step(agent_mod):
+    itx = FakeInteraction(
+        id="i1", environment_id="env1",
+        steps=[FakeStep("thought", "thinking"), FakeStep("model_output", "RESULT")],
+    )
+    assert agent_mod.extract_output_text(itx) == "RESULT"
+
+
+def test_extract_environment_id(agent_mod):
+    itx = FakeInteraction(id="i1", environment_id="env-xyz", steps=[])
+    assert agent_mod.extract_environment_id(itx) == "env-xyz"
+
+
+# --------------------------------------------------------------------------
+# the migrate loop — single green pass
+# --------------------------------------------------------------------------
+def test_migrate_single_pass_when_tests_pass(agent_mod, tmp_path):
+    cobol = tmp_path / "p.cob"
+    cobol.write_text("IDENTIFICATION DIVISION.\n")
+    client = FakeClient([
+        {"env_id": "env1", "interaction_id": "i1",
+         "model_text": "All tests pass. ORACLE: 3/3 equivalent to original COBOL."},
+    ])
+    result = agent_mod.migrate(client, str(cobol))
+    # only one interaction (no forge needed)
+    assert len(client.interactions.calls) == 1
+    # first call provisions a fresh remote env via extra_body (verified surface)
+    first = client.interactions.calls[0]
+    assert first["agent"] == agent_mod.AGENT_ID
+    assert first["stream"] is True
+    assert first["extra_body"] == {"environment": "remote"}
+    assert result.environment_id == "env1"
+
+
+# --------------------------------------------------------------------------
+# the migrate loop — forge then retry (the FORGE beat, SAFE pattern)
+# --------------------------------------------------------------------------
+def test_migrate_forges_then_retries_reusing_environment(agent_mod, tmp_path):
+    cobol = tmp_path / "p.cob"
+    cobol.write_text("IDENTIFICATION DIVISION.\n")
+    client = FakeClient([
+        # turn 1: RED — unknown idiom, agent forged a SKILL.md
+        {"env_id": "env1", "interaction_id": "i1",
+         "model_text": "FAILED: unknown idiom COMP-3. "
+                       "FORGED .agents/skills/comp-3/SKILL.md"},
+        # turn 2: GREEN after re-reading the forged skill
+        {"env_id": "env1", "interaction_id": "i2",
+         "model_text": "All tests pass. 3/3 equivalent to original COBOL."},
+    ])
+    result = agent_mod.migrate(client, str(cobol))
+
+    assert len(client.interactions.calls) == 2
+    # turn 2 REUSES the env id from turn 1 (state threaded via environment, §5.2)
+    second = client.interactions.calls[1]
+    assert second["extra_body"] == {"environment": "env1"}
+    # turn 2 prompt explicitly re-reads the forged skill (SAFE pattern)
+    assert ".agents/skills/" in second["input"]
+    assert result.id == "i2"
+
+
+def test_migrate_caps_iterations(agent_mod, tmp_path):
+    cobol = tmp_path / "p.cob"
+    cobol.write_text("IDENTIFICATION DIVISION.\n")
+    # every turn stays RED + forges -> must stop at MAX_ITERATIONS, never loop forever
+    scripted = [
+        {"env_id": "env1", "interaction_id": f"i{n}",
+         "model_text": "FAILED: unknown idiom. FORGED .agents/skills/x/SKILL.md"}
+        for n in range(agent_mod.MAX_ITERATIONS + 3)
+    ]
+    client = FakeClient(scripted)
+    agent_mod.migrate(client, str(cobol))
+    assert len(client.interactions.calls) == agent_mod.MAX_ITERATIONS
