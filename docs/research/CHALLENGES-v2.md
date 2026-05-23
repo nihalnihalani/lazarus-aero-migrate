@@ -1128,3 +1128,33 @@ histogram/grounding_tool_count, the sentinel-token discovery transcript, or the 
 **Verdict: #2 + #4(code/CLI) + regression are mine-verified; #1, #3-banking, and the L26 function_call
 reconciliation are RELAYED-but-unseen → I hold those until the raw blocks land on my filesystem (or qa pastes
 them).** Not distrust of qa — it's the difference between "told" and "verified," which is the whole job.
+
+## L28 — THINKING 400-vs-200 CONFLICT: almost certainly an SDK-VERSION provenance issue (1.73.1 vs pinned 2.6.0). Settle with one probe of the EXACT committed shape on 2.6.0.
+
+- **The conflict:** qa's direct messages say the runtime HARD-REJECTS (400) EVERY thinking shape (generation_config,
+  extra_body variants, "agent_config nestings", top-level kwarg) — "tested live just now." team-lead's correction +
+  memory [[thinking-level-rejected-live]] say the COMMITTED shape `agent_config={"type":"dynamic","thinking_level":X}`
+  returns 200 (accepted) and is SILENTLY IGNORED (high≈minimal tokens) — NOT 400.
+- **Two reasons these likely DON'T actually contradict:**
+  1. SHAPE: qa's list says "agent_config NESTINGS" → 400. The committed shape is NOT a nesting — thinking_level is a
+     FLAT key on a `{"type":"dynamic"}` config. qa's probe may simply not have included the exact flat-dynamic shape.
+  2. SDK VERSION (the bigger one): team-lead notes the "every shape 400" checks were on **google-genai 1.73.1**;
+     the shipped code PINS `>=2.6.0,<3.0.0` (requirements.txt; my env = 2.6.0). 1.73.1 predates the agent
+     interactions surface (it's below even the 2.0.0 step.* floor) — its class names/wire shapes differ, so a 400
+     there says nothing about 2.6.0. This is the [[captures-need-commit-provenance]] lesson applied to SDK version:
+     a probe only proves things about the SDK it ran on.
+- **WHY THE LABEL DIFFERS (and why I won't sign off until it's settled on 2.6.0):**
+  * If the committed flat shape 400s on 2.6.0 → honest label = "rejected → graceful no-op," THINKING_REJECTED is LIVE.
+  * If it returns 200-but-ignored on 2.6.0 → honest label = "accepted but depth NOT honored (silently ignored),"
+    and THINKING_REJECTED is effectively DEAD CODE (correctly documented as defensive-only).
+  Both yield the SAME user-facing honesty claim ("no thinking-depth control; thinking runs at default") — so the
+  MERGE is not blocked on which one it is, BUT the README/verdict/trace WORDING must match the real mechanism, and a
+  judge could probe it. The shipped trace already says "ACCEPTS the param but does NOT honor depth," which matches the
+  200-ignored reading; if it's actually 400 on 2.6.0, that trace line is wrong and must change.
+- **THE SETTLING PROBE (asked of qa):** on `google-genai==2.6.0` (the pin), send `client.interactions.create(
+  agent="lazarus", input="hi", agent_config={"type":"dynamic","thinking_level":"high"}, ...)` and paste the RAW
+  result: HTTP status (200 vs 400), and if 200, total_thought_tokens for high vs minimal. + the SDK version printed.
+- **Verdict: FEATURE 2 label HELD until qa probes the EXACT committed shape on 2.6.0.** Provisional (and most
+  likely): accepted-but-ignored on 2.6.0 (matches memory + the shipped trace). The user-facing "no depth control"
+  claim is safe either way; the precise mechanism wording + the THINKING_REJECTED-dead-code question hinge on the
+  probe. This is the one fact qa and I must AGREE on before I sign #2 (per team-lead's explicit ask).

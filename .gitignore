@@ -21,3 +21,7 @@ dist/
 # local cache, not source. Forged SKILL.md files under .agents/skills/<name>/ ARE meant
 # to be committed (that's how skills accumulate across runs).
 .agents/.skill_fingerprint
+
+# QA verification-tool raw output (scripts/qa_capture.py) — evidence dumps, not source
+qa_capture_*.out.txt
+qa_capture_*.stdout.txt
