@@ -31,7 +31,7 @@
 | # | Item | Severity | Verdict |
 |---|---|---|---|
 | L1 | LIVE run populates EVERY panel (not just the mock) | stop-the-line | **FIXED IN CODE (pending live)** — server.py now emits `diff`, runs the local differential-oracle pytest fallback, fallback rules, and progressive phases. Tested by test_safety_net_populates_every_panel_without_markers (no markers → diff + 10-case oracle pytest + ≥3 rules + banner). |
-| L2 | Downloaded payroll.py is the agent's REAL sandbox output (Files API) | load-bearing (honesty) | **PENDING LIVE** — code path is real (Files-API tarball extract of `/workspace/payroll.py`, now pinned in the prompt); never exercised on a key. Needs qa live evidence. |
+| L2 | Downloaded payroll.py is the agent's REAL sandbox output (Files API) | load-bearing (honesty) | **GAP FOUND (qa) → MITIGATED + mechanism VERIFIED; pending end-to-end live stream.** Live Files-API tarball TIMED OUT → diff+download blanked (see L9). Committed fallback (49cc1d9) scrapes the agent's echoed module (source="model_output"). qa + I independently confirmed the scrape recovers the real module + passes oracle 10/10. Awaiting qa's full live stream (diff fires + download returns it + budget). |
 | L3 | Local-oracle pytest presented truthfully (orchestrator IS the harness) | load-bearing (honesty) | **CONFIRMED + WIRED** — server.py:308 uses `oracle_harness_pytest_event` (source="differential_oracle", `oracle_equivalence[...]` case names, honest summary). NOT framed as the agent's own pytest. Tested. |
 | L4 | Phase progression is REAL (agent milestones), not faked timing | medium | **FIXED IN CODE (pending live)** — `phase_for_text` drives a forward-only, dedup'd rail off the streamed step text; the iteration counter no longer jumps the rail to TEST. Tested by test_phase_rail_advances_progressively (monotonic). |
 | L5 | golden_io.json (local truth) vs agent's own cobc — conflated? | load-bearing (honesty) | **CONFIRMED honest** — golden is the PRIMARY ground truth; agent live-refresh is opportunistic; prompt + oracle code keep them distinct. No conflation. |
@@ -186,6 +186,37 @@ now provably true: the agent cannot fake equivalence past the oracle. STRONG.
 - **Verdict: NEEDS FIX (cheap, high-leverage).** Pin the path in the prompt + AGENTS.md: "write
   the migration to `/workspace/payroll.py`." Then download, diff, and the local oracle all find
   the real artifact deterministically. qa to confirm live the agent honors it (NEEDS-VERIFY).
+
+---
+
+## L9 — LIVE Files-API tarball TIMES OUT → diff + download blank (qa-found)  — MITIGATED + VERIFIED, pending live stream
+
+- **EVIDENCE (qa-verifier, TWO live runs on the real key, runs 5561f1cf / 1ccbf78f, pre-fix):**
+  `_fetch_env_tarball()` TIMED OUT — the whole-environment tarball is too large/slow (30s hard
+  timeout failed; even 180s+ never returned). At that commit, on a LIVE demo: `diff` + `download`
+  BOTH failed to fire → COBOL↔Python panel EMPTY, Download never armed, GET /api/download → 404.
+  Root cause is fundamental: the Files API only documents the WHOLE-ENV tarball
+  (`environment-{id}:download`); NO per-file helper (findings-agents.md), and the agent installs a
+  conda gnucobol prefix into /workspace, bloating the tarball. qa's read is correct: HONEST failure
+  (empty panels), NOT fake success — the module IS correct in the sandbox, just not retrievable.
+- **MITIGATION (integration-eng, COMMITTED 49cc1d9 + tested):** tarball-None now falls back to
+  `event_transform.python_module_from_output(output)` — the largest python-ish fenced ```python
+  block the agent echoes in its own output — tagged `source="model_output"` (honest provenance:
+  the agent's REAL code, from its output stream, not the disk image). Files-API tarball stays
+  PRIMARY (`source="files_api"`). diff + oracle pytest + download all repopulate. Tests:
+  `test_tarball_timeout_falls_back_to_model_output`, `test_tarball_and_output_both_empty_keeps_panels_honest`.
+- **INDEPENDENTLY VERIFIED (devils-advocate + qa, deterministic, no key):** qa confirmed the LIVE
+  agent echoes a complete 38-line module (Decimal+ROUND_HALF_UP+__main__) and the scrape recovers
+  it + passes the oracle 10/10. I REPRODUCED it with the exact server functions: sample module in a
+  fenced ```python block amid prose → `python_module_from_output` recovers 55/55 lines byte-identical
+  → `prove_equivalence` 10/10 byte-for-byte vs golden → pytest green, source=differential_oracle.
+  Negative control: a 3-line truncated block is correctly NOT scraped (≥5-line guard).
+- **Verdict: MITIGATED + mechanism VERIFIED — pending only qa's END-TO-END live stream.** The
+  scrape works on the agent's REAL echoed output (not just the synthetic test). Remaining: qa's
+  in-flight full live stream confirming diff fires + download returns the module + source label +
+  wall-clock on the real key. Belt-and-suspenders option if ever flaky: an explicit
+  `LAZARUS_MODULE:` marker so recovery doesn't depend on incidental echo; and/or install gnucobol
+  outside /workspace to shrink the tarball.
 
 ---
 
