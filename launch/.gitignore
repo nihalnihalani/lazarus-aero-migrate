@@ -3,6 +3,7 @@
 slides/
 build/
 audio/
+edit/
 *.mp4
 *.aiff
 *.wav
