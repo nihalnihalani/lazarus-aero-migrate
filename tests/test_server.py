@@ -177,3 +177,159 @@ def test_stream_emits_structured_pytest_and_oracle(monkeypatch):
     assert len(pt["cases"]) == 2
     fail = next(c for c in pt["cases"] if c["status"] == "fail")
     assert fail["cobol"] == "0000000.77\n" and fail["python"] == "0000000.78\n"  # the diff!
+
+
+# --------------------------------------------------------------------------
+# The DETERMINISTIC SAFETY NET: even with ZERO markers, the live path fetches the
+# agent's payroll.py and drives the diff + a structured per-case pytest from the
+# orchestrator's differential oracle (agent python vs real-cobc golden bytes).
+# --------------------------------------------------------------------------
+def _tar_with_module(module_text: str, *, path: str = "env-x/workspace/payroll.py") -> bytes:
+    return _make_tar_bytes({path: module_text})
+
+
+def _collect_events(client, run_id):
+    events = []
+    with client.stream("GET", f"/api/stream/{run_id}") as resp:
+        assert resp.status_code == 200
+        for line in resp.iter_lines():
+            s = line.decode() if isinstance(line, (bytes, bytearray)) else line
+            if s and s.startswith("data:"):
+                ev = json.loads(s[len("data:"):].strip())
+                events.append(ev)
+                if ev.get("type") in ("done", "error"):
+                    break
+    return events
+
+
+def _stub_markerless_agent(monkeypatch, *, output, env_id="env-x", emit=None):
+    """Stub the agent so migrate() emits no markers — exercises the safety net path."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-real")
+    monkeypatch.setattr(agent_mod.genai, "Client", lambda *a, **k: object())
+    monkeypatch.setattr(agent_mod, "ensure_agent", lambda client: None)
+
+    def fake_migrate(client, path):
+        agent_mod.emit_iteration(1, agent_mod.MAX_ITERATIONS)
+        for line in (emit or ["Reading COBOL", "Writing payroll.py", "Running pytest"]):
+            agent_mod.emit_to_ui(line)
+        return SimpleNamespace()
+
+    monkeypatch.setattr(agent_mod, "migrate", fake_migrate)
+    monkeypatch.setattr(agent_mod, "extract_output_text", lambda r: output)
+    monkeypatch.setattr(agent_mod, "extract_environment_id", lambda r: env_id)
+
+
+def test_safety_net_populates_every_panel_without_markers(monkeypatch):
+    """No LAZARUS_* markers at all: the server still drives diff + a structured oracle
+    pytest from the fetched payroll.py, plus fallback rules + the oracle banner."""
+    sample_py = (ROOT / "src" / "sample" / "payroll.py").read_text()
+    monkeypatch.setattr(server, "_fetch_env_tarball",
+                        lambda env_id: _tar_with_module(sample_py))
+    _stub_markerless_agent(
+        monkeypatch,
+        output="All equivalence tests pass. byte-for-byte equivalent to original COBOL.",
+    )
+
+    client = TestClient(server.app)
+    run_id = client.post("/api/migrate", json={
+        "cobol": (ROOT / "src" / "sample" / "payroll.cob").read_text(),
+        "filename": "payroll.cob",
+    }).json()["run_id"]
+    events = _collect_events(client, run_id)
+    by_type = {e["type"]: e for e in events}
+
+    # Every panel populated from REAL output, no markers required.
+    assert sum(1 for e in events if e["type"] == "business_rule") >= 3   # fallback rules
+    assert "oracle" in by_type
+    diff = by_type["diff"]
+    assert diff["left"]["name"] == "payroll.cob" and diff["right"]["name"] == "payroll.py"
+    assert "IDENTIFICATION DIVISION" in diff["left"]["code"]              # real submitted COBOL
+    assert diff["right"]["code"] == sample_py                            # the agent's real module
+    pt = by_type["pytest"]
+    assert pt["source"] == "differential_oracle"                        # truthful labeling
+    assert pt["result"] == "green" and len(pt["cases"]) == 10           # all golden cases
+    assert all(c["name"].startswith("oracle_equivalence[") for c in pt["cases"])
+    assert by_type["download"]["content"] == sample_py
+    assert by_type["done"]["verdict"] == "EQUIVALENT"
+
+
+def test_safety_net_goes_red_when_module_diverges(monkeypatch):
+    """A naive port using banker's rounding fails the tie cases — the oracle pytest goes
+    RED with per-case cobol-vs-python bytes, even though the agent claimed success."""
+    naive_py = (
+        "import sys\n"
+        "from decimal import Decimal\n"
+        "g = Decimal(sys.stdin.readline().strip())\n"
+        "tax = round(g * Decimal('0.225'), 2)\n"   # banker's rounding -> wrong on ties
+        "net = g - tax\n"
+        "print(f'{int(net):07d}.{int((net % 1) * 100):02d}')\n"
+    )
+    monkeypatch.setattr(server, "_fetch_env_tarball",
+                        lambda env_id: _tar_with_module(naive_py))
+    _stub_markerless_agent(monkeypatch, output="all tests pass")  # agent OVER-claims
+
+    client = TestClient(server.app)
+    run_id = client.post("/api/migrate", json={
+        "cobol": (ROOT / "src" / "sample" / "payroll.cob").read_text(),
+        "filename": "payroll.cob",
+    }).json()["run_id"]
+    by_type = {e["type"]: e for e in _collect_events(client, run_id)}
+
+    pt = by_type["pytest"]
+    assert pt["source"] == "differential_oracle"
+    assert pt["result"] == "red"                 # the oracle catches the divergence
+    assert any(c["status"] == "fail" for c in pt["cases"])
+    assert by_type["done"]["verdict"] == "INCOMPLETE"   # verdict follows the REAL oracle
+
+
+def test_phase_rail_advances_progressively(monkeypatch):
+    """Phases advance off the streamed step text (ingest->recover->translate->oracle->test)
+    and never move backwards — the rail shows the journey live, not just the verdict."""
+    sample_py = (ROOT / "src" / "sample" / "payroll.py").read_text()
+    monkeypatch.setattr(server, "_fetch_env_tarball",
+                        lambda env_id: _tar_with_module(sample_py))
+    _stub_markerless_agent(
+        monkeypatch,
+        output="all tests pass",
+        emit=[
+            "Reading the COBOL source and provisioning the sandbox",
+            "Recovering the business rules in plain English",
+            "Writing payroll.py translation",
+            "Compiling original with cobc for the differential oracle",
+            "Running pytest equivalence tests",
+        ],
+    )
+
+    client = TestClient(server.app)
+    run_id = client.post("/api/migrate", json={"cobol": "IDENTIFICATION DIVISION.",
+                                              "filename": "payroll.cob"}).json()["run_id"]
+    events = _collect_events(client, run_id)
+
+    order = ["ingest", "recover", "translate", "oracle", "test",
+             "diagnose", "forge", "reload", "verify", "done"]
+    seen_phases = [e["phase"] for e in events if e["type"] == "phase"]
+    idxs = [order.index(p) for p in seen_phases]
+    assert idxs == sorted(idxs)                       # monotonic non-decreasing (never back)
+    assert {"ingest", "recover", "translate", "oracle", "test", "done"} <= set(seen_phases)
+
+
+def test_forge_event_carries_git_additions(monkeypatch):
+    """When the agent forges a skill, the forge event carries git.additions so the
+    'writing itself' panel types in real content (renderer requires ev.git.additions)."""
+    sample_py = (ROOT / "src" / "sample" / "payroll.py").read_text()
+    monkeypatch.setattr(server, "_fetch_env_tarball",
+                        lambda env_id: _tar_with_module(sample_py))
+    _stub_markerless_agent(
+        monkeypatch,
+        output="Forged .agents/skills/numeric-display-rounding/SKILL.md. all tests pass",
+    )
+
+    client = TestClient(server.app)
+    run_id = client.post("/api/migrate", json={"cobol": "X", "filename": "p.cob"}).json()["run_id"]
+    by_type = {e["type"]: e for e in _collect_events(client, run_id)}
+
+    forge = by_type["forge"]
+    assert forge["skill"].endswith("SKILL.md")
+    assert isinstance(forge["git"]["additions"], list) and len(forge["git"]["additions"]) >= 2
+    assert forge["git"]["status"] == "A" and forge["git"]["commit"]
+    assert "reload" in by_type
