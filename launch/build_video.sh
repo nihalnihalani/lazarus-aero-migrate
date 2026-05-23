@@ -7,6 +7,7 @@ cd "$(dirname "$0")/.."
 B=launch/build; A=launch/audio; C=launch/build/clips
 mkdir -p "$A" "$C"
 FPS=30; PAD=0.35; VOICE="${LAZ_VOICE:-Samantha}"; RATE="${LAZ_RATE:-186}"; INCR=0.00045; FADE=0.35
+TEMPO="${LAZ_TEMPO:-1.0}"   # >1 speeds narration (Gemini paces slow); slides auto-resize
 
 slides=(01-crisis 02-scale 03-lazarus 04-proof 05-forge 06-google 07-uses 08-close)
 texts=(
@@ -23,12 +24,12 @@ texts=(
 tts () { # $1=text  $2=out.wav  -> 44.1k stereo wav
   if [ -n "${GEMINI_API_KEY:-}" ] && [ -f launch/tts_gemini.py ]; then
     if .venv/bin/python launch/tts_gemini.py "$1" "/tmp/_g.wav" 2>/tmp/_tts.err; then
-      ffmpeg -y -i /tmp/_g.wav -ar 44100 -ac 2 "$2" >/dev/null 2>&1; return
+      ffmpeg -y -i /tmp/_g.wav -af "atempo=$TEMPO" -ar 44100 -ac 2 "$2" >/dev/null 2>&1; return
     fi
     echo "  (gemini tts failed, falling back to say: $(tail -1 /tmp/_tts.err))" >&2
   fi
   say -r "$RATE" -v "$VOICE" -o /tmp/_s.aiff "$1"
-  ffmpeg -y -i /tmp/_s.aiff -ar 44100 -ac 2 "$2" >/dev/null 2>&1
+  ffmpeg -y -i /tmp/_s.aiff -af "atempo=$TEMPO" -ar 44100 -ac 2 "$2" >/dev/null 2>&1
 }
 
 echo "[1/4] narration ($([ -n "${GEMINI_API_KEY:-}" ] && echo Gemini || echo 'say '))..."
