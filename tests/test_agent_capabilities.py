@@ -256,14 +256,19 @@ def test_grounding_off_prompt_has_no_search_instruction(agent_mod):
 
 
 def test_grounding_on_prompt_adds_search_instruction(agent_mod):
-    """ground=True: the prompt instructs the agent to use google_search / url_context
-    to research the unknown COBOL idiom before forging a skill, and cite findings."""
+    """ground=True: the prompt instructs the agent to use BOTH google_search and url_context
+    to research the unknown COBOL idiom before forging a skill, and to CITE each finding as a
+    `SOURCE: <url> — <fact>` line (the honesty mechanism: cite-before-forge). All three are
+    part of the committed grounding contract, so assert each (not a loose OR)."""
     if not _supports_kw(agent_mod._build_prompt, "ground"):
         pytest.skip("agent._build_prompt has no `ground` kwarg yet")
     prompt = agent_mod._build_prompt("IDENTIFICATION DIVISION.", ground=True)
     low = prompt.lower()
-    assert "google_search" in low or "url_context" in low or "web search" in low
-    assert "research" in low or "cite" in low or "ground" in low
+    assert "google_search" in low                       # the search tool, named
+    assert "url_context" in low                          # the page-read tool, named
+    assert "research" in low                             # research-before-forge framing
+    # the per-source citation directive that makes grounding provable in the output
+    assert "SOURCE:" in prompt
 
 
 def test_grounding_on_does_not_drop_legacy_prompt_body(agent_mod):
