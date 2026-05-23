@@ -103,6 +103,55 @@ def test_oracle_event_from_golden(tmp_path):
 
 
 # --------------------------------------------------------------------------
+# python_module_from_output — resilience fallback when the tarball fetch fails
+# --------------------------------------------------------------------------
+def test_python_module_from_output_extracts_fenced_block():
+    out = ("Here's the migration:\n\n```python\n"
+           "import sys\nfrom decimal import Decimal\n\ndef main():\n    print('ok')\n"
+           "\nif __name__ == '__main__':\n    main()\n```\nDone.")
+    mod = et.python_module_from_output(out)
+    assert mod is not None
+    assert mod.startswith("import sys") and "def main()" in mod
+    assert "```" not in mod              # fences stripped
+
+
+def test_python_module_from_output_picks_largest_real_module():
+    out = ("```python\nx = 1\n```\n"                       # too short, not a module
+           "```python\nimport os\ndef f():\n    return 1\nclass C:\n    pass\nprint(f())\n```")
+    mod = et.python_module_from_output(out)
+    assert mod is not None and "class C" in mod            # the substantial block wins
+
+
+def test_python_module_from_output_none_without_code_block():
+    assert et.python_module_from_output("I finished. All tests pass. No code here.") is None
+    # a fenced block that isn't a module (no import/def/class/print, too short) -> None
+    assert et.python_module_from_output("```\njust prose\nin a block\n```") is None
+
+
+def test_python_module_from_output_prefers_lazarus_module_marker():
+    """The explicit LAZARUS_MODULE: marker block is the deterministic source — it wins even
+    over a larger generic python block elsewhere in the output."""
+    out = (
+        "```python\nimport os\ndef helper():\n    return 1\nclass Big:\n    pass\n"
+        "print('a much larger but UNMARKED block that should NOT be chosen')\n```\n\n"
+        "LAZARUS_MODULE:\n```python\n"
+        "from decimal import Decimal\ndef payroll():\n    return Decimal('1')\nprint(payroll())\n"
+        "```\n"
+    )
+    mod = et.python_module_from_output(out)
+    assert mod is not None
+    assert "def payroll()" in mod                   # the MARKED block, not the bigger one
+    assert "def helper()" not in mod
+
+
+def test_python_module_from_output_marker_block_can_be_short():
+    """Under the explicit marker we trust the agent — even a short module is accepted (the
+    >=5-line heuristic only guards the unmarked fallback)."""
+    out = "LAZARUS_MODULE:\n```python\nprint('hi')\n```\n"
+    assert et.python_module_from_output(out) == "print('hi')"
+
+
+# --------------------------------------------------------------------------
 # business_rules_from_text — recovered rules for the archaeology panel
 # --------------------------------------------------------------------------
 def test_business_rules_from_marker_lines():

@@ -237,10 +237,13 @@ def test_build_prompt_names_true_idiom_not_comp3(agent_mod):
 
 def test_build_prompt_requests_machine_readable_markers(agent_mod):
     """The UI's structured panels need machine-readable data, so the prompt must ask the
-    agent to print the LAZARUS_ORACLE_JSON + LAZARUS_RULE marker lines."""
+    agent to print the LAZARUS_ORACLE_JSON + LAZARUS_RULE marker lines, AND the LAZARUS_MODULE
+    block (the tarball-independent, deterministic source for the diff + download)."""
     prompt = agent_mod._build_prompt("IDENTIFICATION DIVISION.")
     assert "LAZARUS_ORACLE_JSON" in prompt
     assert "LAZARUS_RULE" in prompt
+    assert "LAZARUS_MODULE" in prompt
+    assert "/workspace/payroll.py" in prompt
 
 
 def test_forge_retry_prompt_instructs_explicit_reread(agent_mod):

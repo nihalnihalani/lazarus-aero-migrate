@@ -145,17 +145,35 @@ def phase_for_text(text: str) -> str | None:
     return None
 
 
-def python_module_from_output(text: str) -> str | None:
-    """Best-effort: recover the agent's payroll.py source from its model output.
+_MODULE_MARKER = "LAZARUS_MODULE:"
 
-    A resilience fallback for when the whole-environment tarball fetch is slow/unavailable
-    (it can time out on the live Files API): the agent typically echoes the full module in a
-    fenced ```python block. Returns the LARGEST python-ish fenced block that looks like a
-    real module (has an import or def/print and >=5 lines), or None if none qualifies. This
-    is clearly the agent's REAL written code (echoed in its output), not invented — but the
-    Files-API tarball stays the PRIMARY source (authoritative on-disk bytes); this only kicks
-    in when that fetch yields nothing, so the diff/download panels aren't blocked by latency.
+
+def python_module_from_output(text: str) -> str | None:
+    """Recover the agent's COMPLETE payroll.py source from its model output — the PRIMARY,
+    tarball-independent module source (the Files-API whole-env tarball can hang past the demo
+    budget; qa saw 180s+ never return). This is the agent's REAL written code, echoed in its
+    own output — not invented.
+
+    Resolution order:
+      1. DETERMINISTIC: the explicit `LAZARUS_MODULE:` marker the agent is instructed to print
+         exactly once, immediately followed by a single fenced ```python block holding the
+         whole final module (agent.py prompt + .agents/AGENTS.md). Preferred — unambiguous.
+      2. FALLBACK: the LARGEST python-ish fenced block that looks like a real module (has an
+         import / def / class / print and >=5 lines), for runs where the marker is absent.
+    Returns the module text (fences stripped), or None if nothing qualifies.
     """
+    # 1. Explicit marker: `LAZARUS_MODULE:` then the next fenced block (optionally on the
+    #    same or following lines). This is the deterministic path.
+    idx = text.find(_MODULE_MARKER)
+    if idx != -1:
+        after = text[idx + len(_MODULE_MARKER):]
+        m = re.search(r"```(?:python|py)?\s*\n(.*?)```", after, re.S)
+        if m:
+            body = m.group(1).strip("\n")
+            if body.strip():
+                return body
+
+    # 2. Fallback: the largest module-shaped fenced python block anywhere in the output.
     blocks = re.findall(r"```(?:python|py)?\s*\n(.*?)```", text, re.S)
     best = None
     for block in blocks:
