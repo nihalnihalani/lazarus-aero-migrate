@@ -105,10 +105,29 @@ export async function driveLiveRun(player, cobol, filename, opts = {}) {
   }
 
   // --- Subscribe to the SSE stream -----------------------------------------
-  const streamUrl = (postSupported && runId)
-    ? ENDPOINTS.stream(base, runId)                 // contract B
-    : ENDPOINTS.migrateGet(base, moduleName);       // contract A (GET-direct)
+  const useGetDirect = !(postSupported && runId);
 
+  // GET-direct (contract A) returns the SSE stream OR a 503 JSON when there's no
+  // key. EventSource can't read a 503 body — it just fires onerror opaquely — so
+  // probe health first and surface the precise no-key error instead.
+  if (useGetDirect) {
+    const h = await checkHealth(base);
+    if (h.ok && !h.keyPresent) {
+      player.push(errStep('no API key',
+        'GEMINI_API_KEY not set on the server. Provision the key (export GEMINI_API_KEY=…), then re-run.'));
+      return { runId: null, abort: () => {} };
+    }
+    if (!h.ok) {
+      player.push(errStep('backend unreachable',
+        `Cannot reach the LAZARUS server at ${base || location.origin}. ` +
+        `Start it:  uvicorn server:app --app-dir src  (then reload).`));
+      return { runId: null, abort: () => {} };
+    }
+  }
+
+  const streamUrl = useGetDirect
+    ? ENDPOINTS.migrateGet(base, moduleName)        // contract A (GET-direct)
+    : ENDPOINTS.stream(base, runId);                // contract B
   const es = new EventSource(streamUrl);
   let done = false;
 

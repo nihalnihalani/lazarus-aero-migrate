@@ -42,7 +42,7 @@ python3 -m http.server 8000
 Then click **"load golden sample · payroll.cob"** (or drop a `.cob` file). The
 migration runs: business rules stream in → Python is written → the original
 COBOL is compiled & run as the oracle → pytest goes **RED** → the agent
-**forges a `SKILL.md`** (git diff types in) → hot-reload → pytest goes **GREEN**
+**forges a `SKILL.md`** (git diff types in) → re-reads it on the next pass (same env) → pytest goes **GREEN**
 → byte-for-byte equivalence → **Download** unlocks.
 
 ## Controls
