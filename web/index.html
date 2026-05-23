@@ -68,15 +68,21 @@
     <section class="console">
       <nav class="phase-rail" id="phase-rail" aria-label="progress"></nav>
 
-      <!-- WORKING banner: current phase + spinner + latest agent action.
-           Visible while the run is in flight so it never looks frozen. -->
+      <!-- WORKING banner: current phase + spinner + latest agent action +
+           an always-advancing heartbeat (elapsed timer + reassurance) so a
+           long live run (8–12 min, silent during tool execution) never reads
+           as frozen. Visible while the run is in flight. -->
       <div class="working" id="working" hidden>
         <span class="spinner" aria-hidden="true"></span>
         <div class="working-text">
           <div class="working-phase" id="working-phase">working…</div>
           <div class="working-action" id="working-action"></div>
+          <div class="working-reassure" id="working-reassure" hidden>Real migrations take a few minutes — the agent is working in a live sandbox.</div>
         </div>
-        <span class="working-iter" id="working-iter"></span>
+        <div class="working-meta">
+          <span class="working-elapsed" id="working-elapsed" hidden><span class="pulse-tick" aria-hidden="true"></span><span id="working-elapsed-time">0:00</span></span>
+          <span class="working-iter" id="working-iter"></span>
+        </div>
       </div>
 
       <!-- progressive flow: cards reveal as they receive real data and

@@ -404,14 +404,17 @@ ends EQUIVALENT with a downloadable, runnable payroll.py") is MET. **Nothing mat
 or misleading on the code/data path.**
 
 **⏳ DEMO READINESS — SIGN-OFF OPEN, pending two in-flight items:**
-1. **L11 heartbeat (task #6) — VISUALLY VERIFIED by me; just needs COMMIT.** I loaded the live UI
-   in a real browser and drove the committed heartbeat logic against the live DOM: the elapsed
-   timer advances once/sec ("0:09" at 9s elapsed) and the reassurance line ("Real migrations take
-   a few minutes — the agent is working in a live sandbox") reveals after the 6s quiet threshold.
-   This clears the L11 "looks frozen / hung app" bar — honestly (real clock, no faked phase
-   progress). My answer to "is the heartbeat sufficient for L11?": YES. The richer breadcrumbs +
-   phase-rail advancement are a Phase-2 enhancement (engagement), NOT required to fix the frozen
-   bar. Only remaining gate on this item: the working-tree fix must be COMMITTED.
+1. **L11 heartbeat (task #6) — FULLY VERIFIED end-to-end by me (2 servers); just needs COMMIT.**
+   Test 1 (:8141, isolated): drove the committed heartbeat logic against the live DOM — timer
+   advances once/sec ("0:09" at 9s) and the reassurance line ("Real migrations take a few minutes
+   — the agent is working in a live sandbox") reveals after the 6s quiet threshold. Test 2 (:8777,
+   team-lead's server, FULL run lifecycle): clicked "use the sample", sampled every 500ms — timer
+   ticked the whole run (0:00→0:01→…→0:21, every second present) while WORKING showed, and on `done`
+   the WORKING banner + timer HID (workingVisible→false) and the verdict badge showed EQUIVALENT.
+   So both (a) ticks at 1s cadence during WORKING and (b) stops on done are CONFIRMED. Clears the
+   L11 "looks frozen / hung app" bar honestly (real clock, no faked phase progress). My answer to
+   "is the heartbeat sufficient for L11?": YES, verified. Breadcrumbs + phase-rail advancement are
+   Phase-2 (engagement), not required for the frozen bar. Only remaining gate: COMMIT the fix.
 2. **DEMO_SCRIPT honest strictly-live rewrite (task #7):** must set the multi-minute expectation
    up front, show elapsed time, never fake speed (content in DEMO_NARRATIVE_live-DRAFT.md).
 
