@@ -902,3 +902,27 @@ agent tools per §3).
   state which golden the multi-run was proven against.
 - **Verdict: HOLD — code/prompt VERIFIED genuinely cross-module + regression-clean; awaiting qa's one
   live proof (a real cross-module rule from a 2+-file run, + which golden the oracle used).**
+
+## L21 — qa_capture.py captures the RIGHT grounding evidence, but STRUCTURALLY can't prove thinking/cross-run/cross-module — a "verified" report must not rest on it for those
+
+- **Why this matters:** task #3 (live-verify) is marked completed but I found NO evidence artifacts on
+  disk, and the only capture tool (scripts/qa_capture.py) can test exactly ONE of the four features. A
+  sign-off drawn from a harness that can't exercise a feature is the L16 trap wearing a lab coat.
+- **GROUNDING — the harness is GOOD.** It builds a step-type histogram from BOTH the live stream and the
+  authoritative `get()` fetch, and captures real `google_search_call`/`url_context_call`/result blocks.
+  That's genuine runtime evidence (not SDK-acceptance). Once L17's breadcrumb fix lands AND it also dumps
+  `usage.grounding_tool_count` (currently it reads `usage` but only prints thought/total tokens), this is
+  sufficient to VERIFY grounding.
+- **THINKING — the harness CANNOT test it (two structural reasons):** (1) it never sets `LAZARUS_THINKING`
+  (only `LAZARUS_GROUND`); (2) it calls `client.interactions.create(...)` DIRECTLY (line 62), bypassing
+  `agent._create_interaction_stream`, so the thinking `generation_config` is never sent at all. Its
+  `total_thought_tokens` read therefore only reflects the DEFAULT (medium) thinking. To prove L18's
+  question it must route through the agent's stream helper, run minimal vs high, and show the tokens
+  DIFFER — and only AFTER the flat-shape fix.
+- **CROSS-RUN (#3) / CROSS-MODULE (#4) — NOT covered.** No multi-run banking sequence; no multi-file
+  mode (the docstring advertises `--cobol2` but argparse has only `--cobol`). So neither can be evidenced
+  by this tool as written.
+- **Verdict: harness VERIFIES grounding only (post-L17 + grounding_tool_count). For thinking/cross-run/
+  cross-module, demand either harness additions or explicit manual captures — do NOT accept "qa_capture
+  ran clean" as proof for those three.** Recorded so the merge gate can't be cleared by an
+  under-scoped capture.
