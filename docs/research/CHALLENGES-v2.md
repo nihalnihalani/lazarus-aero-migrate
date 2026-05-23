@@ -639,3 +639,27 @@ not a Phase-1 blocker; sign-off unaffected. Review remains fully closed.
 - Owner: integration-eng (the emit_phase/prose bug) + team-lead/doc-keeper (the script line). This
   is the one remaining honesty overclaim; flagging before it's read by a judge. NOT a Phase-1 code
   blocker (panels still populate; verdict honest) — it's a DEMO_SCRIPT accuracy blocker.
+
+---
+
+## L14 — RETRACTED (FALSE POSITIVE). My error: I analyzed a STALE-SERVER capture.
+
+I was WRONG. integration-eng's rebuttal is correct and I verified it two ways myself:
+1. The SHIPPED `emit_step` (origin/main 5d99443) has ZERO `phase_for_text` references — it only
+   pushes the step; the prose-driven phase emission was removed in 87a5572 (the comment even says
+   "DO NOT advance the phase rail from prose"). So the "two phase sources fighting" root cause I
+   described does NOT exist on main.
+2. I replayed the EXACT sse_full5 prose (the capture I cited as proof of the skip) through the
+   SHIPPED code: RAIL = ingest → recover → translate → oracle → test → forge → reload → done,
+   forge count = 1, translate/oracle/test ALL present. The full in-order pipeline.
+ROOT CAUSE OF MY ERROR: sse_full5.jsonl was captured from a STALE uvicorn started before the
+87a5572 fix (commit 21:19; capture mtime 21:21; a server started <21:19 still served OLD code).
+Its 4×-forge signature is the OLD-code fingerprint — impossible under shipped code (single
+emit_phase per beat). I treated the capture as authoritative WITHOUT confirming the server's commit
+— the exact "verify the provenance before claiming" discipline I'd applied elsewhere, not applied
+here. My fault.
+CONCLUSION: the DEMO_SCRIPT "phase rail completes the full pipeline in order" claim is TRUE against
+shipped code (verified by my own replay + integration-eng's replay + qa's TestClient on real
+server.py). NO overclaim. NO code change needed (87a5572 already did exactly the fix I'd proposed).
+L14 is WITHDRAWN. Lesson recorded: a captured stream is only evidence for the code the capturing
+server was running — confirm the server's commit before drawing conclusions from a capture.
