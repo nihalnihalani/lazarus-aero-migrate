@@ -54,8 +54,16 @@ export class Renderer {
       workingPhase: $('#working-phase', root),
       workingAction: $('#working-action', root),
       workingIter: $('#working-iter', root),
+      workingReassure: $('#working-reassure', root),
+      workingElapsed: $('#working-elapsed', root),
+      workingElapsedTime: $('#working-elapsed-time', root),
     };
     this.artifact = null;
+    // live heartbeat: an always-advancing elapsed timer so a long, silent
+    // tool-execution stretch never reads as frozen. See _startHeartbeat.
+    this._hbInterval = null;   // setInterval id
+    this._hbStart = 0;         // run start (ms)
+    this._lastActionAt = 0;    // when the action line last changed (ms)
   }
 
   // --- progressive reveal helpers -----------------------------------------
@@ -93,15 +101,64 @@ export class Renderer {
     if (!r.working) return;
     r.working.hidden = false;
     if (r.flowIdle) r.flowIdle.classList.add('gone');
+    // first time the banner shows in this run → start the always-advancing clock
+    if (!this._hbInterval) this._startHeartbeat();
     if (phase != null) r.workingPhase.textContent = phase;
-    if (action != null) r.workingAction.textContent = action;
+    if (action != null) {
+      r.workingAction.textContent = action;
+      this._lastActionAt = Date.now();   // fresh agent activity → reset the quiet timer
+      if (r.workingReassure) r.workingReassure.hidden = true;
+    }
     if (iteration != null) r.workingIter.textContent = iteration ? `iter ${iteration}` : '';
   }
 
   /** Stop the WORKING banner (run finished or errored). */
   _stopWorking() {
+    this._stopHeartbeat();
     if (this.refs.working) this.refs.working.hidden = true;
     this._setActiveCard(null);
+  }
+
+  // --- live heartbeat ------------------------------------------------------
+  // agent.py only forwards step.delta text; during multi-minute tool stretches
+  // (conda install / compile / pytest) no text arrives, so the action line +
+  // rail sit static. The elapsed timer below ALWAYS advances, and after a quiet
+  // stretch a calm reassurance line appears — so a live run never reads as
+  // frozen. Pure clock; no API dependency.
+  _QUIET_MS = 6000;   // action line silent this long → show reassurance
+
+  _fmtElapsed(ms) {
+    const s = Math.floor(ms / 1000);
+    const m = Math.floor(s / 60);
+    return `${m}:${String(s % 60).padStart(2, '0')}`;
+  }
+
+  _startHeartbeat() {
+    const r = this.refs;
+    if (!r.workingElapsed) return;
+    this._hbStart = Date.now();
+    this._lastActionAt = this._hbStart;
+    r.workingElapsed.hidden = false;
+    r.workingElapsedTime.textContent = '0:00';
+    if (this._hbInterval) clearInterval(this._hbInterval);
+    this._hbInterval = setInterval(() => this._tickHeartbeat(), 1000);
+  }
+
+  _tickHeartbeat() {
+    const r = this.refs;
+    const now = Date.now();
+    r.workingElapsedTime.textContent = this._fmtElapsed(now - this._hbStart);
+    // reveal the reassurance line once the agent has been quiet for a while
+    if (r.workingReassure && now - this._lastActionAt > this._QUIET_MS) {
+      r.workingReassure.hidden = false;
+    }
+  }
+
+  _stopHeartbeat() {
+    if (this._hbInterval) { clearInterval(this._hbInterval); this._hbInterval = null; }
+    const r = this.refs;
+    if (r.workingElapsed) r.workingElapsed.hidden = true;
+    if (r.workingReassure) r.workingReassure.hidden = true;
   }
 
   /** Surface a fatal error front-and-center in the flow so the main area is
@@ -166,11 +223,14 @@ export class Renderer {
         '<span class="spinner" aria-hidden="true"></span>' +
         '<span>Agent waking up in a live sandbox…</span>';
     }
+    // stop any prior heartbeat so a re-run starts a fresh clock from 0:00
+    this._stopHeartbeat();
     if (r.working) {
       r.working.hidden = true;
       r.workingPhase.textContent = 'working…';
       r.workingAction.textContent = '';
       r.workingIter.textContent = '';
+      if (r.workingElapsedTime) r.workingElapsedTime.textContent = '0:00';
     }
     this._buildRail();
   }
