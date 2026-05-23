@@ -413,9 +413,15 @@ def test_grounding_breadcrumbs_tolerate_dict_and_flat_shapes(agent_mod):
 #     the AGENT-path create() carries agent_config = {"type": "dynamic", "thinking_level": <lvl>}.
 #     (The agent interaction params expose `agent_config`, NOT `generation_config`, which is
 #     MODEL-path only; thinking_level is FLAT — there is no nested thinking_config in the
-#     interactions types. qa proved the runtime rejects generation_config on the agent path.)
-#   * if the managed-agent runtime rejects the thinking-bearing call, the impl sets
-#     THINKING_REJECTED and retries WITHOUT agent_config so the run still completes.
+#     interactions types. qa proved the runtime rejects a `generation_config` on the agent path,
+#     which is why we use agent_config.)
+#   * LIVE BEHAVIOR (qa-measured): the well-formed agent_config above is ACCEPTED (no 400) but
+#     SILENTLY IGNORED — thinking runs at the default and thought-token counts do NOT track the
+#     requested level. So these tests assert the WIRE SHAPE we send, NOT that the level controls
+#     model depth (it does not). No label here may imply depth control.
+#   * The reject->fallback path (THINKING_REJECTED + retry WITHOUT agent_config) is DEFENSIVE
+#     insurance for a hypothetical future runtime that rejects the param; it is NOT the observed
+#     live behavior (the shipped shape is accepted), so its test is labeled accordingly.
 def _thinking_cfg_from_call(call):
     """Recover the agent-path thinking config the impl attached, or None if it sent none."""
     if "agent_config" in call:
@@ -490,11 +496,13 @@ def test_thinking_case_insensitive(agent_mod, tmp_path, monkeypatch):
 
 
 def test_thinking_rejection_falls_back_without_agent_config(agent_mod, monkeypatch):
-    """If the managed-agent runtime rejects the thinking-bearing create(), the driver
-    retries WITHOUT agent_config (graceful no-op), sets THINKING_REJECTED, and the run
-    completes. Proven with a client whose first create() (carrying agent_config) raises a
-    thinking-rejection error and whose retry succeeds. (qa proved the runtime DOES reject
-    every thinking config shape live, so this fallback is the load-bearing path.)"""
+    """DEFENSIVE path (NOT the observed live behavior). qa measured that the agent runtime
+    ACCEPTS the well-formed agent_config (no 400) and just silently ignores it — so in
+    practice this fallback never fires today. This test proves the SAFETY NET: IF a future
+    runtime DID reject the thinking-bearing create(), the driver retries WITHOUT agent_config
+    (graceful no-op), sets THINKING_REJECTED, and the run still completes. Simulated with a
+    client whose first create() (carrying agent_config) raises a rejection and whose retry
+    succeeds. This is insurance, not the load-bearing path."""
     monkeypatch.setenv("LAZARUS_THINKING", "high")
 
     final = types.SimpleNamespace(id="iR", environment_id="envR",
@@ -507,7 +515,8 @@ def test_thinking_rejection_falls_back_without_agent_config(agent_mod, monkeypat
             def create(**kwargs):
                 _RejectingClient.interactions.calls.append(kwargs)
                 if "agent_config" in kwargs:
-                    # The runtime's real agent-path rejection message (qa live: 400).
+                    # SIMULATED rejection (a hypothetical future runtime). Live, qa saw the
+                    # opposite: agent_config is ACCEPTED (no 400) and silently ignored.
                     raise ValueError("Unknown parameter: agent_config.thinking_level")
                 def _stream():
                     yield types.SimpleNamespace(event_type="interaction.completed",
@@ -526,6 +535,42 @@ def test_thinking_rejection_falls_back_without_agent_config(agent_mod, monkeypat
     assert "agent_config" not in calls[1]                   # the clean retry
     assert agent_mod.THINKING_REJECTED is True              # flagged for the UI
     assert agent_mod.extract_environment_id(itx) == "envR"  # run still completed
+
+
+def test_thinking_accepted_path_no_fallback_no_reject_flag(agent_mod, monkeypatch):
+    """THE OBSERVED LIVE BEHAVIOR (qa): the agent runtime ACCEPTS the well-formed agent_config
+    (no 400). So the happy path issues exactly ONE create() carrying the agent_config, takes NO
+    fallback, and leaves THINKING_REJECTED False. This is what actually happens today; the
+    rejection test above is only the defensive net. (Note: this proves the param is SENT and
+    ACCEPTED — it deliberately does NOT assert the level changes model depth, because qa
+    measured that it does not.)"""
+    monkeypatch.setenv("LAZARUS_THINKING", "high")
+    agent_mod.THINKING_REJECTED = False
+
+    final = types.SimpleNamespace(id="iA", environment_id="envA",
+                                  steps=[FakeStep("model_output", GREEN)])
+
+    class _AcceptingClient:
+        class interactions:
+            calls = []
+            @staticmethod
+            def create(**kwargs):
+                _AcceptingClient.interactions.calls.append(kwargs)   # accepted, no raise
+                def _stream():
+                    yield types.SimpleNamespace(event_type="interaction.completed",
+                                                interaction=final, interaction_id="iA")
+                return _stream()
+            @staticmethod
+            def get(interaction_id):
+                return final
+
+    itx = agent_mod._run_interaction(_AcceptingClient(), input_text="x", environment="remote")
+
+    calls = _AcceptingClient.interactions.calls
+    assert len(calls) == 1                                       # accepted -> no retry/fallback
+    assert calls[0]["agent_config"] == {"type": "dynamic", "thinking_level": "high"}
+    assert agent_mod.THINKING_REJECTED is False                  # nothing rejected
+    assert agent_mod.extract_environment_id(itx) == "envA"
 
 
 def test_thinking_unrelated_error_not_swallowed(agent_mod, monkeypatch):
