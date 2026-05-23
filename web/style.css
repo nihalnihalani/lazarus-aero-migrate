@@ -219,13 +219,44 @@ body.no-key .status-dot, body.backend-down .status-dot { background: var(--amber
 .trace-text { color: var(--text-mid); font-size: 12.5px; line-height: 1.6; }
 .trace-code { margin: 6px 0 0; padding: 9px 11px; background: #070b09; border-radius: 7px; font-size: 11.5px; line-height: 1.55; overflow-x: auto; color: var(--text); white-space: pre; }
 
-/* RIGHT — proof cards */
+/* RIGHT — proof cards (accordion: only the active beat is open) */
 .proof-col { display: flex; flex-direction: column; gap: var(--gap); }
 .card {
   border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface);
-  overflow: hidden; opacity: .68; transition: opacity .35s, border-color .35s, box-shadow .35s, transform .35s;
+  overflow: hidden; transition: border-color .35s, box-shadow .35s;
 }
-.card-body { padding: 16px; }
+.card-head { cursor: pointer; }
+.card-head::after {
+  content: "›"; margin-left: 6px; color: var(--muted); font-size: 14px;
+  transform: rotate(90deg); transition: transform .3s; flex: 0 0 auto;
+}
+/* collapsed by default — header only */
+.card-body {
+  max-height: 0; overflow: hidden; padding: 0 16px; opacity: 0;
+  transition: max-height .45s ease, padding .35s ease, opacity .3s ease;
+}
+/* open the active phase's card (one beat at a time); hover or click any to peek */
+#stage[data-phase="recover"]   .card[data-when="recover"]  > .card-body,
+#stage[data-phase="translate"] .card[data-when="translate"] > .card-body,
+#stage[data-phase="oracle"]    .card[data-when="test"]     > .card-body,
+#stage[data-phase="test"]      .card[data-when="test"]     > .card-body,
+#stage[data-phase="diagnose"]  .card[data-when="test"]     > .card-body,
+#stage[data-phase="forge"]     .card[data-when="forge"]    > .card-body,
+#stage[data-phase="reload"]    .card[data-when="forge"]    > .card-body,
+#stage[data-phase="verify"]    .card[data-when="test"]     > .card-body,
+#stage[data-phase="done"]      .card[data-when="test"]     > .card-body,
+.card.open > .card-body,
+.card:hover > .card-body {
+  max-height: 72vh; overflow: auto; padding: 16px; opacity: 1;
+}
+#stage[data-phase="recover"]   .card[data-when="recover"]  .card-head::after,
+#stage[data-phase="translate"] .card[data-when="translate"] .card-head::after,
+#stage[data-phase="oracle"]    .card[data-when="test"]     .card-head::after,
+#stage[data-phase="test"]      .card[data-when="test"]     .card-head::after,
+#stage[data-phase="diagnose"]  .card[data-when="test"]     .card-head::after,
+#stage[data-phase="forge"]     .card[data-when="forge"]    .card-head::after,
+#stage[data-phase="reload"]    .card[data-when="forge"]    .card-head::after,
+.card.open .card-head::after { transform: rotate(-90deg); color: var(--accent); }
 
 /* active-phase emphasis (purely CSS, driven by #stage[data-phase]) */
 #stage[data-phase="recover"]   .card[data-when="recover"],

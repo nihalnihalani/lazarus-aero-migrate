@@ -137,6 +137,11 @@ function wireControls() {
   $('#restart-btn').addEventListener('click', () => state.loaded && startLive());
   $('#download-btn').addEventListener('click', () => state.renderer.triggerDownload());
 
+  // Accordion: click a proof card's header to toggle it open (overrides the
+  // auto-open that follows the active phase). Keeps only one beat on screen.
+  document.querySelectorAll('.proof-col .card-head').forEach((h) =>
+    h.addEventListener('click', () => h.parentElement.classList.toggle('open')));
+
   document.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT') return;
     if (e.code === 'Space') { e.preventDefault(); state.loaded && startLive(); }
