@@ -208,6 +208,16 @@ def test_phase_for_text_none_on_plain_chatter():
     assert et.phase_for_text("hmm let me think about this") is None
 
 
+def test_phase_for_text_conda_forge_is_oracle_not_forge():
+    """Regression: 'conda-forge' (the gnucobol install channel) is the ORACLE beat, not
+    FORGE — the forge pattern must not match 'forge' inside 'conda-forge'. This matters now
+    that tool breadcrumbs surface the literal install command to phase_for_text."""
+    assert et.phase_for_text("$ micromamba install -c conda-forge gnucobol") == "oracle"
+    # real forge verbs/paths still detected
+    assert et.phase_for_text("Forged a new skill") == "forge"
+    assert et.phase_for_text("forging .agents/skills/x/SKILL.md") == "forge"
+
+
 # --------------------------------------------------------------------------
 # diff_event — COBOL<->Python side-by-side from real sources
 # --------------------------------------------------------------------------

@@ -64,6 +64,25 @@ app = FastAPI(title="LAZARUS — Aero-Migrate", version="1.0")
 _RUNS: dict[str, dict] = {}
 _SENTINEL = object()  # marks end-of-stream in the queue
 
+# Completed-run download retention: when the SSE stream ends we pop _RUNS (one subscriber
+# per run), which previously made GET /api/download/{run_id} 404 AFTER the run — the UI arms
+# Download from the inline event so the demo works, but the standalone endpoint died. Keep
+# the migrated bytes in a bounded LRU so the endpoint serves them post-run too.
+import collections  # noqa: E402 (kept next to the structure it backs)
+_COMPLETED_DOWNLOADS: "collections.OrderedDict[str, str]" = collections.OrderedDict()
+_COMPLETED_DOWNLOADS_MAX = 32  # cap memory; oldest finished run's bytes evicted first
+
+
+def _retain_download(run_id: str, content: str | None) -> None:
+    """Stash a finished run's migrated module so /api/download serves it after the stream
+    ends. Bounded LRU (oldest evicted) so a long-lived server doesn't grow unbounded."""
+    if not content:
+        return
+    _COMPLETED_DOWNLOADS[run_id] = content
+    _COMPLETED_DOWNLOADS.move_to_end(run_id)
+    while len(_COMPLETED_DOWNLOADS) > _COMPLETED_DOWNLOADS_MAX:
+        _COMPLETED_DOWNLOADS.popitem(last=False)
+
 # Operator-facing labels for the phase rail / WORKING banner (frontend reads phase.label).
 # Used as the default when a phase is emitted without an explicit label (e.g. milestone-
 # derived phases). Keep these human and present-tense — they're what the operator reads
@@ -467,16 +486,21 @@ async def migrate_stream(run_id: str, request: Request):
                     break
                 yield {"data": json.dumps(ev)}
         finally:
-            _RUNS.pop(run_id, None)  # one subscriber per run; clean up
+            # Retain the migrated bytes (if any) so /api/download still serves them after the
+            # stream ends, THEN drop the live run record (one subscriber per run; clean up).
+            finished = _RUNS.pop(run_id, None)
+            if finished is not None:
+                _retain_download(run_id, finished.get("download"))
 
     return EventSourceResponse(event_gen())
 
 
 @app.get("/api/download/{run_id}")
 def download(run_id: str):
-    """Return the migrated module for a finished run (when the Files-API hook is wired)."""
+    """Return the migrated module for a run — DURING the run (from _RUNS) or AFTER it ends
+    (from the retained-downloads LRU), so the endpoint doesn't 404 once the stream closes."""
     run = _RUNS.get(run_id)
-    content = run.get("download") if run else None
+    content = (run.get("download") if run else None) or _COMPLETED_DOWNLOADS.get(run_id)
     if not content:
         raise HTTPException(status_code=404, detail="migrated module not available yet")
     return PlainTextResponse(

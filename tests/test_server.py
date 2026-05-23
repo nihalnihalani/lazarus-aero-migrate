@@ -461,6 +461,35 @@ def test_tarball_unavailable_plus_module_marker_populates_diff_and_download(monk
     assert by_type["done"]["verdict"] == "EQUIVALENT"
 
 
+def test_download_endpoint_serves_module_after_stream_ends(monkeypatch):
+    """Phase-2 fix: GET /api/download/{run_id} must still return the module AFTER the SSE
+    stream ends (the stream pops _RUNS). Previously it 404'd post-run; now a retained-downloads
+    LRU serves it. The UI armed Download from the inline event regardless, but the standalone
+    endpoint must work too."""
+    sample_py = (ROOT / "src" / "sample" / "payroll.py").read_text()
+    _stub_markerless_agent(monkeypatch, output=_output_echoing_module(
+        sample_py, trailer="All equivalence tests pass."))
+
+    client = TestClient(server.app)
+    run_id = client.post("/api/migrate", json={
+        "cobol": (ROOT / "src" / "sample" / "payroll.cob").read_text(),
+        "filename": "payroll.cob",
+    }).json()["run_id"]
+    # Drain the stream to completion -> _RUNS is popped, download retained in the LRU.
+    _collect_events(client, run_id)
+    assert run_id not in server._RUNS                       # live run record cleaned up
+
+    resp = client.get(f"/api/download/{run_id}")            # was 404 before the fix
+    assert resp.status_code == 200
+    assert "ROUND_HALF_UP" in resp.text                     # the real migrated module
+    assert resp.headers["content-type"].startswith("text/x-python")
+
+
+def test_download_endpoint_404_for_unknown_run(monkeypatch):
+    client = TestClient(server.app)
+    assert client.get("/api/download/never-existed").status_code == 404
+
+
 def test_tarball_and_output_both_empty_keeps_panels_honest(monkeypatch):
     """If BOTH the tarball fetch fails AND the agent echoed no module, diff/download stay
     absent (honest empty, never faked) and the verdict falls to the coarse prose check."""
