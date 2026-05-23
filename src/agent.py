@@ -50,6 +50,7 @@ agent-authored SKILL.md, which is UNVERIFIED):
 from __future__ import annotations
 
 import argparse
+import os
 import pathlib
 import re
 
@@ -60,6 +61,29 @@ BASE_AGENT = "antigravity-preview-05-2026"   # Gemini 3.5 Flash managed agent (v
 MAX_ITERATIONS = 4                            # hard cap — never loop forever on stage
 
 AGENTS_DIR = pathlib.Path(__file__).resolve().parent.parent / ".agents"
+
+# ---------------------------------------------------------------------------
+# OPT-IN CAPABILITY FLAGS (each DEFAULT OFF — with all flags off the prompt,
+# base_environment, and interaction config are byte-identical to the shipped
+# single-module live path). Read from the environment on every call so the
+# behavior is per-run and unit-testable via monkeypatching os.environ.
+# ---------------------------------------------------------------------------
+#   LAZARUS_GROUND   — web-grounding: research an unknown idiom via
+#                      google_search / url_context BEFORE forging (Feature 1).
+#   LAZARUS_THINKING — interaction-scoped thinking level (Feature 2).
+# Set when the managed-agent runtime rejects an interaction-scoped thinking
+# config (graceful no-op): the driver retries WITHOUT it and records the fact
+# so the UI / operator can see the capability isn't actually supported there.
+THINKING_REJECTED = False
+
+
+def _grounding_enabled() -> bool:
+    """True when web-grounding (Feature 1) is opted in via LAZARUS_GROUND.
+
+    Accepts 1/true/yes/on (case-insensitive). DEFAULT OFF: any other value (or
+    unset) keeps the byte-identical, non-grounded prompt + stream behavior.
+    """
+    return os.environ.get("LAZARUS_GROUND", "").strip().lower() in {"1", "true", "yes", "on"}
 
 # Heuristics for reading the agent's terminal message (the demo also shows this on screen).
 _PASS_RE = re.compile(
@@ -129,8 +153,26 @@ def ensure_agent(client: genai.Client) -> None:
     )
 
 
-def _build_prompt(cobol: str) -> str:
-    return (
+# Opt-in research preamble (Feature 1). Prepended ONLY when grounding is enabled, so
+# the un-grounded prompt stays byte-identical. The Antigravity agent already defaults to
+# google_search + url_context tools (ensure_agent leaves tools at default), so this is a
+# pure instruction change steering the agent to research an unfamiliar idiom and cite it.
+_GROUNDING_PREAMBLE = (
+    "WEB-GROUNDING IS ON. When you hit a COBOL idiom you are NOT certain about, do NOT "
+    "guess and do NOT forge a SKILL.md from memory. FIRST research it: use the "
+    "google_search tool for the idiom (e.g. \"COBOL ROUNDED rounding mode\", "
+    "\"COBOL PIC 9V99 DISPLAY de-editing\") and the url_context tool to read the most "
+    "authoritative source you find (IBM Enterprise COBOL language reference, GnuCOBOL "
+    "docs, ISO COBOL standard). Cite each finding inline as `SOURCE: <url> — <one-line "
+    "fact>` BEFORE you write the skill, and base the forged .agents/skills/<idiom>/SKILL.md "
+    "on those cited findings. Grounded research precedes the forge, never replaces the "
+    "byte-for-byte differential oracle.\n\n"
+)
+
+
+def _build_prompt(cobol: str, *, ground: bool = False) -> str:
+    preamble = _GROUNDING_PREAMBLE if ground else ""
+    return preamble + (
         "Migrate this COBOL program to idiomatic Python. Work in the sandbox.\n"
         "1. Recover and print the business rules in plain English.\n"
         "2. Translate to Python and write the final module to /workspace/payroll.py "
@@ -177,15 +219,19 @@ def _build_prompt(cobol: str) -> str:
     )
 
 
-def _build_forge_retry_prompt(skill_path: str) -> str:
+def _build_forge_retry_prompt(skill_path: str, *, ground: bool = False) -> str:
     """Follow-up prompt for the FORGE retry turn (SAFE re-read pattern).
 
     The forged SKILL.md persists on disk in the reused environment, but we do NOT
     assume it has been auto-reloaded into the agent's instruction context. So we
     explicitly tell the agent to re-read it (and the rest of .agents/skills/) before
     re-attempting the translation.
+
+    When grounding is on, prepend the research preamble so a DIFFERENT unknown idiom
+    surfacing on the retry is researched-then-forged, never guessed.
     """
-    return (
+    preamble = _GROUNDING_PREAMBLE if ground else ""
+    return preamble + (
         "Your previous attempt failed on an unknown COBOL idiom and you forged a new "
         f"skill at {skill_path}.\n"
         "That file is on disk in this SAME environment, but it is NOT yet loaded into "
@@ -219,13 +265,22 @@ def _tool_breadcrumb(step) -> str | None:
     from a dev box): we read the documented Managed-Agents shapes
     (web/STREAM_CONTRACT.md adapter table) but tolerate anything missing —
       * code_execution_call   -> `$ <arguments.code>` (the command/code the agent ran),
-      * code_execution_result -> a short status line (`✗ error` / `✓ ok`) + any result text.
+      * code_execution_result -> a short status line (`✗ error` / `✓ ok`) + any result text,
+      * google_search_call    -> `🔎 <query>` (the search the agent ran while grounding),
+      * google_search_result  -> `🔎 ✓ <N results / snippet>`,
+      * url_context_call      -> `🌐 <url>` (the page the agent fetched to ground a claim),
+      * url_context_result    -> `🌐 ✓ <title / snippet>`,
+      * thought               -> `💭 <summary>` (a thinking-summary block, Feature 2).
+    The grounding/thought breadcrumbs make web-grounding + thinking PROVABLE in the live
+    trace (they only ever appear when those opt-in capabilities are exercised).
     Returns None when the step isn't a tool step or exposes no usable detail, so the caller
     simply emits nothing — breadcrumbs are a live-UX bonus, never required. These breadcrumbs
     feed phase_for_text (server side) so the rail lights recover/translate/oracle/test off
     real tool activity (`cobc`, `pytest`, `payroll.py`) instead of only end-block prose.
     """
     stype = getattr(step, "type", None)
+    if stype is None and isinstance(step, dict):
+        stype = step.get("type")   # tolerate a raw-dict step (defensive; SDK normally types it)
     if stype == "code_execution_call":
         args = getattr(step, "arguments", None)
         code = getattr(args, "code", None) if args is not None else None
@@ -243,7 +298,69 @@ def _tool_breadcrumb(step) -> str | None:
             snippet = " " + result.strip().splitlines()[-1][:160]
         mark = "✗ error" if is_error else "✓ ok"
         return f"{mark}{snippet}".rstrip() or None
+    if stype == "google_search_call":
+        query = _step_field(step, "arguments", "query") or _step_field(step, "query")
+        return f"🔎 {str(query).strip()[:200]}" if query else None
+    if stype == "google_search_result":
+        snippet = _result_snippet(step)
+        return ("🔎 ✓" + (f" {snippet}" if snippet else "")).rstrip()
+    if stype == "url_context_call":
+        url = _step_field(step, "arguments", "url") or _step_field(step, "url")
+        return f"🌐 {str(url).strip()[:200]}" if url else None
+    if stype == "url_context_result":
+        snippet = _result_snippet(step)
+        return ("🌐 ✓" + (f" {snippet}" if snippet else "")).rstrip()
+    if stype == "thought":
+        summary = _thought_summary_text(step)
+        return f"💭 {summary[:200]}" if summary else None
     return None
+
+
+def _step_field(step, *path):
+    """Read a (possibly nested) attr/dict field off a step, tolerating either shape.
+
+    e.g. _step_field(step, "arguments", "query") reads step.arguments.query, or
+    step.arguments["query"], or step.query — returning None on any miss. Lets the
+    grounding breadcrumbs work whether the SDK surfaces typed objects or raw dicts.
+    """
+    obj = step
+    for key in path:
+        if obj is None:
+            return None
+        nxt = getattr(obj, key, None)
+        if nxt is None and isinstance(obj, dict):
+            nxt = obj.get(key)
+        obj = nxt
+    if obj is None and len(path) > 1:
+        # Fall back to the LAST key read directly off the step (flat shape).
+        return _step_field(step, path[-1])
+    return obj
+
+
+def _result_snippet(step) -> str:
+    """A short one-line snippet from a tool RESULT step (search/url), best-effort."""
+    result = getattr(step, "result", None)
+    if result is None and isinstance(step, dict):
+        result = step.get("result")
+    if isinstance(result, str) and result.strip():
+        return result.strip().splitlines()[0][:160]
+    return ""
+
+
+def _thought_summary_text(step) -> str:
+    """Join the text parts of a `thought` step's summary (verified §8 shape:
+    thought -> {type, summary:[{type:"text", text}], signature}). Best-effort."""
+    summary = getattr(step, "summary", None)
+    if summary is None and isinstance(step, dict):
+        summary = step.get("summary")
+    parts = []
+    for part in (summary or []):
+        text = getattr(part, "text", None)
+        if text is None and isinstance(part, dict):
+            text = part.get("text")
+        if text:
+            parts.append(text)
+    return " ".join(parts).strip()
 
 
 def extract_output_text(interaction, client: genai.Client | None = None) -> str:
@@ -393,20 +510,21 @@ def migrate(client: genai.Client, cobol_path: str):
     """
     cobol = pathlib.Path(cobol_path).read_text()
     interaction = None
+    ground = _grounding_enabled()   # opt-in web-grounding (Feature 1); default off
 
     for iteration in range(1, MAX_ITERATIONS + 1):
         emit_iteration(iteration, MAX_ITERATIONS)   # visible counter (UI renders this)
 
         if iteration == 1:
             interaction = _run_interaction(
-                client, input_text=_build_prompt(cobol), environment="remote"
+                client, input_text=_build_prompt(cobol, ground=ground), environment="remote"
             )
         else:
             # Reuse the SAME environment so the forged SKILL.md is on disk, and explicitly
             # instruct the agent to re-read it (SAFE pattern; no silent auto-reload).
             interaction = _run_interaction(
                 client,
-                input_text=_build_forge_retry_prompt(_pending_skill_path),
+                input_text=_build_forge_retry_prompt(_pending_skill_path, ground=ground),
                 environment=extract_environment_id(interaction),
             )
 
