@@ -692,14 +692,14 @@ def _bank_forged_skill_from_output(skill_path: str, output_text: str) -> pathlib
 def _looks_like_thinking_rejection(exc: Exception) -> bool:
     """Heuristic: did this error come from sending the agent-path thinking config?
 
-    qa LIVE-PROVED the managed-agent runtime rejects every thinking config shape (400):
-    a top-level generation_config -> "use agent_config"; generation_config in extra_body ->
-    "Unknown parameter". We now send the SDK-correct agent_config={"type":"dynamic",
-    "thinking_level": …}; if THAT is also rejected we still want a graceful no-op. We can't
+    The OTHER thinking shapes (top-level generation_config / extra_body variants) 400 on the
+    agent path; the SHIPPED agent_config={"type":"dynamic","thinking_level": …} shape is
+    ACCEPTED but the depth is IGNORED (qa live: thought-token counts don't track the level —
+    high ≈ 2096 < minimal ≈ 2408). This heuristic + the retry are DEFENSIVE-ONLY insurance for
+    a future runtime that starts rejecting the param — NOT the observed live behavior. We can't
     rely on a specific exception type from a dev box, so we match the message defensively and
-    treat a thinking-shaped error as "retry without it" — the retry re-raises if it ALSO
-    fails, so a genuine unrelated error still surfaces (it won't recur once we drop
-    agent_config).
+    treat a thinking-shaped error as "retry without it"; the retry re-raises if it ALSO fails,
+    so a genuine unrelated error still surfaces (it won't recur once we drop agent_config).
     """
     msg = str(exc).lower()
     return any(k in msg for k in (
