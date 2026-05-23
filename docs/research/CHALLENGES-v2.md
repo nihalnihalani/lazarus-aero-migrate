@@ -1324,3 +1324,16 @@ on the pinned SDK. The verdict/oracle/falsifiability core is untouched. The merg
   team-lead's docs pass. User-facing headline ("no depth control / not a knob we can set") stays TRUE either way —
   only the MECHANISM claim (proven-ignored vs unprovable) needs softening. Grounding/skill/multi-module + regression +
   falsifiability unaffected.
+
+## L28/L31 — VERSION-STAMPED RECEIPT LANDED (qa) → thinking 400-vs-200 SETTLED; L29 stamp satisfied for #2
+qa pasted the definitive probe WITH full provenance (the L29 version-stamp I required):
+  google-genai 2.6.0 · .venv/bin/python · agent_config={'type':'dynamic','thinking_level':'high'} → HTTP 200 ACCEPTED,
+  status=completed, total_thought_tokens=927.
+So the COMMITTED shape returns 200 (accepted) on the pinned SDK — NOT 400. My L28 SDK-provenance call is confirmed
+(the "400 every shape" was 1.73.1 / other shapes). THINKING_REJECTED is dead code on this shape (no error fires) —
+confirmed. This converts the #2 thinking item from RELAYED → SEEN (version-stamped on 2.6.0). 
+WORDING NUANCE (keep the conservative one): qa's latest phrasing "accepted-but-NOT-honored" still slightly
+overclaims a demonstrated null; their OWN sample data (12-sample means 2785/2692/2665 flat; ±1000 noise;
+non-monotonic 2 high<min / 6 high>min) supports "accepted; effect on depth INCONCLUSIVE" as the defensible
+statement (per L31). Net: #2 = ACCEPTED (200, version-stamped) + depth-effect INCONCLUSIVE + no control claimed.
+The L31 docs softening ("silently ignored" → inconclusive) still applies.
