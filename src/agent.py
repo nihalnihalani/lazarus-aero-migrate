@@ -8,9 +8,19 @@ forges its own SKILL.md when it meets an unknown idiom.
 Reconciled to the VERIFIED Managed Agents / Interactions API surface (see
 docs/RESEARCH_MANAGED_AGENTS.md, consolidated 2026-05-23). Key facts this code
 depends on:
-  - SDK:               google-genai >= 2.0.0   (managed-agents path; NOT the 1.55 model path)
+  - SDK:               google-genai >= 2.6.0   (managed-agents path; NOT the 1.55 model path)
   - Base agent id:     "antigravity-preview-05-2026"  (Gemini 3.5 Flash; same string for
                        agent= and base_agent=)
+  - Gemini 3.x config: BREAKING — do NOT send temperature / top_p / top_k anywhere; they
+                       are rejected/ignored on Gemini 3.x. The only generation knob is
+                       thinking_level (str: minimal|low|medium|high; default now "medium").
+                       We pass NO generation_config and rely on the "medium" default, so
+                       there is nothing to break here — keep it that way.
+  - Capability note:   The MANAGED-AGENT runtime does not expose function_calling,
+                       structured output, mcp, computer_use, or file_search. (This is an
+                       agent-runtime limitation, NOT a model limitation — the underlying
+                       gemini-3.5-flash model DOES support function calling & structured
+                       output; the Antigravity agent simply doesn't surface them.)
   - Create agent:      client.agents.create(id, base_agent, system_instruction, base_environment)
   - Run interaction:   client.interactions.create(agent=..., input=..., stream=...,
                        extra_body={"environment": "remote" | <env_id> | {type,sources}})
@@ -27,10 +37,14 @@ depends on:
 
 FORGE beat (SAFE pattern — do NOT rely on silent mid-run auto-reload of an
 agent-authored SKILL.md, which is UNVERIFIED):
-  1. The agent writes .agents/skills/<idiom>/SKILL.md and commits it (persists on disk).
+  1. The agent writes .agents/skills/<idiom>/SKILL.md and commits it (persists on disk
+     IN THIS environment).
   2. The retry interaction REUSES the same environment_id so the file is present.
   3. The retry prompt EXPLICITLY instructs the agent to re-read .agents/skills/ before
      retrying — we never assume the forged skill is already in context.
+  Persistence scope: the forged skill lives in the reused environment, NOT forever. A
+  fresh agent invocation forks a clean base_environment; carrying a forged skill into
+  future runs permanently means re-registering the agent with that SKILL.md mounted.
 """
 from __future__ import annotations
 
@@ -38,7 +52,7 @@ import argparse
 import pathlib
 import re
 
-from google import genai  # pip install -U "google-genai>=2.0.0"
+from google import genai  # pip install -U "google-genai>=2.6.0"
 
 AGENT_ID = "lazarus"
 BASE_AGENT = "antigravity-preview-05-2026"   # Gemini 3.5 Flash managed agent (verified)
@@ -99,13 +113,18 @@ def ensure_agent(client: genai.Client) -> None:
 def _build_prompt(cobol: str) -> str:
     return (
         "Migrate this COBOL program to idiomatic Python. Work in the sandbox.\n"
-        "0. If GnuCOBOL (cobc) is missing, install it (apt-get install -y gnucobol; "
-        "fall back to src/sample/golden_io.json if network/apt is unavailable).\n"
         "1. Recover and print the business rules in plain English.\n"
         "2. Translate to Python (write payroll.py).\n"
-        "3. DIFFERENTIAL ORACLE: compile + run the ORIGINAL COBOL with cobc over the "
-        "input battery; capture canonical outputs (ground truth).\n"
-        "4. Generate equivalence tests asserting python_output == cobol_output "
+        "3. DIFFERENTIAL ORACLE (ground truth = the ORIGINAL COBOL's REAL output):\n"
+        "   - PRIMARY: src/sample/golden_io.json holds real GnuCOBOL outputs captured "
+        "ahead of time. Use these as ground truth. Do NOT try to install a COBOL "
+        "compiler (the sandbox has no root/package manager); the diff must not depend "
+        "on a live compile.\n"
+        "   - OPPORTUNISTIC: if `cobc` OR a mounted COBOL binary "
+        "(src/sample/payroll_linux_x86_64) is present, re-run the input battery through "
+        "it to confirm golden_io.json is still fresh — but the equivalence check stays "
+        "against the golden bytes.\n"
+        "4. Generate equivalence tests asserting python_output == golden_cobol_output "
         "byte-for-byte; run pytest.\n"
         "5. On failure from an UNKNOWN COBOL idiom, write "
         ".agents/skills/<idiom>/SKILL.md teaching yourself how to handle it, commit it, "
@@ -139,19 +158,32 @@ def _build_forge_retry_prompt(skill_path: str) -> str:
     )
 
 
-def extract_output_text(interaction) -> str:
-    """Return the text of the final model_output step.
+def _model_output_text(step) -> str:
+    """Pull text from a model_output step's content (verified shape §8:
+    model_output -> {type, content:[{type:"text", text}]})."""
+    if getattr(step, "type", None) != "model_output":
+        return ""
+    return "".join(
+        part.text
+        for part in (getattr(step, "content", None) or [])
+        if getattr(part, "type", None) == "text"
+    )
 
-    The agent resource has no guaranteed `.output_text`; iterate `steps` and pull the
-    last model_output step's text (verified step shape, RESEARCH §8).
+
+def extract_output_text(interaction) -> str:
+    """Return the agent's terminal model output text.
+
+    C11 hardening: the agent resource has NO guaranteed `.output_text`, and the terminal
+    interaction object is not guaranteed to carry a `.steps` array either. So we PREFER
+    the text accumulated from the stream during _run_interaction (always available per
+    §8's step.* events), and fall back to iterating `.steps` if present.
     """
-    text_parts: list[str] = []
-    for step in getattr(interaction, "steps", None) or []:
-        if getattr(step, "type", None) == "model_output":
-            for part in getattr(step, "content", None) or []:
-                if getattr(part, "type", None) == "text":
-                    text_parts.append(part.text)
-    return "".join(text_parts)
+    streamed = getattr(interaction, "_lazarus_output_text", None)
+    if streamed:
+        return streamed
+    return "".join(
+        _model_output_text(step) for step in (getattr(interaction, "steps", None) or [])
+    )
 
 
 def extract_environment_id(interaction) -> str | None:
@@ -169,8 +201,10 @@ def _forged_skill_path(output_text: str) -> str | None:
 
 
 def _run_interaction(client: genai.Client, *, input_text: str, environment):
-    """One streamed interaction. Forwards step.delta text to the UI; returns the
-    completed interaction object (from the interaction.completed event)."""
+    """One streamed interaction. Forwards step.delta text to the UI, accumulates the
+    model output FROM THE STREAM (so we never depend on a terminal `.steps` array,
+    C11), and returns the completed interaction object with that text attached as
+    `_lazarus_output_text`."""
     stream = client.interactions.create(
         agent=AGENT_ID,
         input=input_text,
@@ -179,47 +213,69 @@ def _run_interaction(client: genai.Client, *, input_text: str, environment):
     )
 
     final = None
+    output_parts: list[str] = []
     for event in stream:
         et = getattr(event, "event_type", None)
         if et == "step.delta":
-            delta = getattr(event, "delta", None)
-            text = getattr(delta, "text", None)
+            text = getattr(getattr(event, "delta", None), "text", None)
             if text:
                 emit_to_ui(text)
+                output_parts.append(text)
+        elif et == "step.stop":
+            # Terminal text of a completed step (verified §8 carries the full Step here).
+            output_parts.append(_model_output_text(getattr(event, "step", None)))
         elif et == "interaction.completed":
             final = getattr(event, "interaction", None) or final
+
+    if final is not None:
+        accumulated = "".join(output_parts)
+        # Prefer streamed text; if the stream carried none, fall back to terminal .steps.
+        if not accumulated:
+            accumulated = "".join(
+                _model_output_text(s) for s in (getattr(final, "steps", None) or [])
+            )
+        try:
+            final._lazarus_output_text = accumulated
+        except (AttributeError, TypeError):
+            pass  # immutable terminal object; extract_output_text will read .steps
     return final
 
 
 def migrate(client: genai.Client, cobol_path: str):
     """Run the write -> run -> prove -> self-heal loop, streaming steps to the UI.
 
-    Threads state across forge->retry turns via environment_id (files + forged skills
-    persist), capped at MAX_ITERATIONS. Returns the final completed interaction
-    (carries .id, .environment_id, .steps).
+    The MAX_ITERATIONS cap is ENFORCED here in code (C10): a real per-turn counter is
+    emitted to the UI via emit_iteration() and the loop hard-stops at MAX_ITERATIONS —
+    the prompt text is only a hint, never the safety net (an infinite loop on stage is
+    death). State threads across forge->retry turns via environment_id. Returns the
+    final completed interaction (carries .id, .environment_id, .steps).
     """
     cobol = pathlib.Path(cobol_path).read_text()
+    interaction = None
 
-    interaction = _run_interaction(
-        client, input_text=_build_prompt(cobol), environment="remote"
-    )
+    for iteration in range(1, MAX_ITERATIONS + 1):
+        emit_iteration(iteration, MAX_ITERATIONS)   # visible counter (UI renders this)
 
-    for _ in range(1, MAX_ITERATIONS):
+        if iteration == 1:
+            interaction = _run_interaction(
+                client, input_text=_build_prompt(cobol), environment="remote"
+            )
+        else:
+            # Reuse the SAME environment so the forged SKILL.md is on disk, and explicitly
+            # instruct the agent to re-read it (SAFE pattern; no silent auto-reload).
+            interaction = _run_interaction(
+                client,
+                input_text=_build_forge_retry_prompt(_pending_skill_path),
+                environment=extract_environment_id(interaction),
+            )
+
         output = extract_output_text(interaction)
         if _tests_passed(output):
             break
-        skill_path = _forged_skill_path(output)
-        if not skill_path:
-            # Failed but no new skill was forged -> nothing new to re-read; stop.
+        _pending_skill_path = _forged_skill_path(output)
+        if not _pending_skill_path:
+            # Failed but no new skill was forged -> nothing new to re-read; stop early.
             break
-        env_id = extract_environment_id(interaction)
-        # Reuse the SAME environment so the forged SKILL.md is on disk, and explicitly
-        # instruct the agent to re-read it (SAFE pattern; no silent auto-reload).
-        interaction = _run_interaction(
-            client,
-            input_text=_build_forge_retry_prompt(skill_path),
-            environment=env_id,
-        )
 
     return interaction
 
@@ -227,6 +283,15 @@ def migrate(client: genai.Client, cobol_path: str):
 def emit_to_ui(text: str) -> None:
     """Forward streamed text/steps to the front-end live trace. Wire to SSE/WebSocket."""
     print(text, end="", flush=True)
+
+
+def emit_iteration(current: int, total: int) -> None:
+    """Surface the enforced iteration counter to the UI (C10's visible counter).
+
+    Called once per loop turn before the interaction runs. Wire to the same SSE/
+    WebSocket channel so the front-end can render e.g. "Iteration 2 / 4".
+    """
+    print(f"\n[iteration {current}/{total}]", flush=True)
 
 
 def main() -> None:

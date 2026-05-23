@@ -21,13 +21,13 @@ LAZARUS is a **single Managed Agent** running in one Google-hosted Linux sandbox
                 │ Interactions API
 ┌───────────────┴───────────────────────────────────────────────────────┐
 │  MANAGED AGENT  (base: antigravity-preview-05-2026 · Gemini 3.5 Flash) │
-│  Persistent Ubuntu sandbox (Python 3.12, Node 22; GnuCOBOL provisioned)│
-│                                                                        │
+│  Persistent Ubuntu sandbox (Python 3.12, Node 22; real GnuCOBOL via    │
+│  micromamba/conda-forge userland — no root, pre-warmed into reused env)│
 │   Tools used:  code_execution · filesystem (persistent)               │
 │   Skills:      .agents/AGENTS.md + .agents/skills/*/SKILL.md           │
 │                                                                        │
 │   LOOP:  read COBOL → recover business rules → write Python →          │
-│          run ORIGINAL COBOL via GnuCOBOL (oracle) → gen equ. tests →   │
+│          compile+run original COBOL (real GnuCOBOL oracle) → gen tests→│
 │          pytest → on fail: diagnose → (forge SKILL.md if new idiom) →  │
 │          patch → re-run → until GREEN                                  │
 └────────────────────────────────────────────────────────────────────────┘
@@ -38,10 +38,12 @@ LAZARUS is a **single Managed Agent** running in one Google-hosted Linux sandbox
 1. **Ingest.** The whole COBOL module is sent in one request (Gemini 3.5 Flash 1M-token context, 65,536-token max output for full-file generation).
 2. **Recover business logic.** The agent emits a human-readable spec of the rules the COBOL encodes — tax/rounding/edge-cases. This is shown on screen (the "archaeology" beat) and used as the translation contract.
 3. **Translate.** The agent writes `payroll.py` to the sandbox filesystem.
-4. **Build the oracle.** The agent compiles the *original* COBOL with `cobc -x` and runs it on a battery of inputs, capturing canonical outputs. **This is the ground truth** — not agent-invented assertions.
+4. **Build the oracle.** During **pre-warm**, the agent **installs real GnuCOBOL itself inside the sandbox via micromamba / conda-forge** — userland, **no root** (the conda package brings its own compiler + `libcob` + `gmp`, so no system libraries or `apt` are needed; the sandbox has unrestricted outbound network). It installs into a long-lived `environment_id` that is reused on stage; the agent then **compiles the *original* COBOL with that real `cobc -x` and runs it** on a battery of inputs, capturing canonical outputs. Because the env is reused, the live run **needs no network at demo time**. **This is the ground truth** — real-compiler output, not agent-invented assertions.
 5. **Generate equivalence tests.** `test_equivalence.py` asserts `python_output == cobol_output` byte-for-byte across the input battery.
 6. **Run + iterate.** `pytest` runs; failures stream into the UI (RED). The agent reads the traceback and patches.
-7. **FORGE self-heal.** If the failure is an *unknown idiom* (e.g. `COMP-3` packed decimal, `REDEFINES`, `OCCURS DEPENDING ON`), the agent **writes a new `.agents/skills/<idiom>/SKILL.md`** describing how to handle it. The skill **stays live for the rest of the migration** because we keep working **in the same `environment_id`**; the next pass **re-reads `.agents/skills/`** from that live environment. It re-runs, and tests go **GREEN**.
+7. **FORGE self-heal.** If the failure is an *unknown idiom* — for the golden demo, **COBOL numeric `DISPLAY` formatting (zero-padded `0000775.00`) + `ROUND-HALF-UP` equivalence**; other candidates are `REDEFINES`, `OCCURS DEPENDING ON` — the agent **writes a new `.agents/skills/<idiom>/SKILL.md`** describing how to handle it. The skill **stays live for the rest of the migration** because we keep working **in the same `environment_id`**; the next pass **re-reads `.agents/skills/`** from that live environment. It re-runs, and tests go **GREEN**.
+
+> **Why this idiom (narrative honesty, proven by real bytes):** the demo's RED is caused by COBOL's numeric `DISPLAY` **de-editing** (full PICTURE width, zero-padded: `0000775.00`) plus `COMPUTE ... ROUNDED` = **round-half-up** vs Python's banker's rounding — *not* by `COMP-3`. (A `USAGE DISPLAY` variant of the module produces byte-identical output to the COMP-3 version, so packed-decimal storage has zero effect on the diff.) The forged skill teaches exactly this format+rounding equivalence — the real, subtler institutional-knowledge gap.
 
 > **Verified vs. unverified — and the scope of "persist" (so we never overclaim on stage):**
 > - ✅ Startup auto-discovery of `.agents/skills/*/SKILL.md` is documented.
@@ -56,15 +58,19 @@ LAZARUS is a **single Managed Agent** running in one Google-hosted Linux sandbox
 
 The strongest attack on any "AI migrates code" demo: *"The agent wrote the code AND the tests, so passing proves internal consistency, not correctness."* (A DeepMind judge will ask exactly this.)
 
-LAZARUS answers it structurally: the **oracle is the original COBOL program's real output**, produced by a real compiler (GnuCOBOL) the agent did not write. Equivalence is therefore *falsifiable*. If the Python rounds a packed-decimal differently than the mainframe would, the diff is non-zero and the test is RED — visibly, on stage.
+LAZARUS answers it structurally: the **oracle is the original COBOL program's real output**, produced by a real compiler (GnuCOBOL) the agent did not write. Equivalence is therefore *falsifiable*. If the Python rounds or formats a value differently than the mainframe would (e.g. banker's rounding vs COBOL `ROUND-HALF-UP`, or `775.0` vs the zero-padded `0000775.00`), the diff is non-zero and the test is RED — visibly, on stage.
 
 ```
-   COBOL source ──cobc──> native binary ──run(inputs)──> canonical_output  ┐
-                                                                           ├─ assert ==
-   COBOL source ──Gemini──> payroll.py    ──run(inputs)──> python_output   ┘
+   COBOL source ──real cobc (GnuCOBOL in-sandbox)──> run(inputs) ─> canonical_output ┐
+                                                                                     ├─ assert ==
+   COBOL source ──Gemini──> payroll.py ───────────── run(inputs) ─> python_output    ┘
 ```
 
-**Fallback if `apt`/network for GnuCOBOL is gated in preview:** ship a pre-computed `golden_io.json` (input→output pairs captured from a real COBOL run before the event) and diff against that. Same guarantee, no live compile.
+**Primary path (verified-true for this sandbox):** **real GnuCOBOL** is installed via **micromamba / conda-forge userland** (no `apt`, no root — the sandbox has unrestricted outbound network) during a **pre-warm** step into a long-lived `environment_id`; the original COBOL is compiled & run with it in-sandbox. The env is reused on stage, so the live run itself needs **no network** (the install happened at pre-warm).
+
+**Deterministic fallback:** a pre-computed `golden_io.json` (input→output pairs captured from the *same* real GnuCOBOL run before the event); diff against that if the live run stalls. Same guarantee, no live execution.
+
+> **Honesty point (a strength, not a hedge):** under BOTH paths the oracle is **real GnuCOBOL output**, never agent-invented — so the falsifiability / anti-objection claim holds either way. The only thing that differs between the two is *when* the real compiler ran (live on stage vs. captured pre-event).
 
 ## 4. Managed Agents configuration (verified against live docs, May 2026)
 
@@ -87,7 +93,7 @@ client.agents.create(
         "type": "remote",
         "sources": [
             {"type": "inline", "target": ".agents/AGENTS.md", "content": "..."},
-            {"type": "inline", "target": ".agents/skills/comp-3/SKILL.md", "content": "..."},
+            {"type": "inline", "target": ".agents/skills/cobol-display-rounding/SKILL.md", "content": "..."},
         ],
     },
     # tools omitted -> defaults to code_execution + google_search + url_context
@@ -148,7 +154,7 @@ itx2 = client.interactions.create(agent="lazarus", input=NEXT,
 | Risk | Mitigation |
 |---|---|
 | Auto-iteration non-deterministic / loops forever | Hard cap iterations (≤4) with a visible counter; cached green run as fallback |
-| GnuCOBOL install gated in preview | Pre-warm install into `base_environment` (persists) **or** `golden_io.json` fallback |
+| Getting GnuCOBOL into the sandbox (no `apt`/root) | **Pre-warm: install real GnuCOBOL via `micromamba`/conda-forge userland** (no root; network is on) into a long-lived `environment_id`, reused on stage so the live run needs no network **or** fall back to `golden_io.json` captured from the same `cobc` run |
 | Cold-start latency at 0:00 | Pre-warm sandbox with a `background=true` heartbeat before walking on |
 | COBOL too large for clean 2-min run | Curated ~150-line module with one reproducible bug class (decimal/rounding) |
 | Beta API breaking change | Pin `-preview-05-2026`; smoke-test the morning of; record backup video |

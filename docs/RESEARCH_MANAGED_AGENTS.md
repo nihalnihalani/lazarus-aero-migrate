@@ -62,7 +62,10 @@ multi-agent orchestration) driven through the **Interactions API**.
 > file search (see `RESEARCH_GEMINI_3.5.md §3`); the *Antigravity managed agent
 > runtime* exposes only `code_execution` + `google_search` + `url_context` +
 > filesystem — **not** `function_calling` / `file_search` / `computer_use` / `mcp` /
-> structured output. Both statements are correct and not in conflict.
+> structured output. These are **managed-agent limitations, not model ones.** Both
+> statements are correct and not in conflict. Verbatim (antigravity-agent doc):
+> *"file_search, computer_use, google_maps, function_calling and mcp are not yet
+> supported."*
 >
 > The generic platform advertises still more tools (Google Maps, Computer Use, File
 > Search); the **Antigravity agent** supports the narrower set below. Use THIS list.
@@ -229,8 +232,11 @@ client.interactions.create(agent=AGENT, input="curl the Gemini API...",
   passing its ID."* (This corrects the looser seed phrasing "permanently deleted after
   7 days of inactivity.")
 - ✅ Resources (verbatim): *"CPU: 4 cores; Memory: 16 GB"*; Ubuntu + Py3.12 + Node22.
-  Compute is free during preview. Up to **1,000** managed agents.
+  Compute is free during preview.
   Source: <https://ai.google.dev/gemini-api/docs/agent-environment.md.txt>
+- ⏳ "Up to 1,000 managed agents" — **[UNVERIFIED]**, dropped from the verified set
+  (researcher-gemini QA: not stated in `agent-environment.md.txt`). Do not cite this
+  number until a primary source is found.
 
 > ✅ ARCHITECTURE's "4 CPU / 16 GB", "~5s provision", "auto-snapshot after 15 min idle",
 > "retained 7 days" are all CONFIRMED.
@@ -284,8 +290,8 @@ Extract `/workspace/...` for the migrated module. There is **no**
 ## 10. Pricing / quota
 
 - ✅ **Pay-as-you-go** "based on Gemini model tokens and tool usage"; a run typically
-  consumes **100k–3M tokens**; up to **1,000** managed agents; env compute **not billed
-  during preview**.
+  consumes **100k–3M tokens**; env compute **not billed during preview**.
+  ("Up to 1,000 managed agents" was dropped — [UNVERIFIED], see §7.)
 - ✅ Interaction storage: paid 55 days / free 1 day (`store=true` default).
 - ⏳ Exact $ per token for the Antigravity agent — defer to the `gemini-3.5-flash`
   token pricing in `RESEARCH_GEMINI_3.5.md §5`.

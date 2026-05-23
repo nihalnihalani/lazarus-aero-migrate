@@ -27,8 +27,9 @@
    *pages* show top-level `environment="remote"`, but the SDK doesn't expose it typed yet; the
    cookbook (runnable) + SDK README confirm `extra_body={"environment": ...}`. `agents.create`
    IS different — `base_environment` is a real top-level typed param.
-2. **Pin `google-genai>=2.0.0`** for managed agents (cookbook). The `1.55.0` in interactions docs
-   is the model-interactions path.
+2. **Pin `google-genai>=2.4.0`** (CORRECTED — see SDK section). `client.agents` + the Environment
+   API ship in 2.4.0; 1.55.0 (interactions debut) and the cookbook's 2.0.0 are BOTH too low for
+   `agents.create`. REPIN requirements.txt + agent.py from 1.55.0 → 2.4.0.
 3. **Base agent ID still has `-preview-`:** `antigravity-preview-05-2026`. Repo string is correct.
 4. **FORGE caveat (C3):** a runtime-authored `SKILL.md` persists on disk when the environment is
    reused (verified); auto-RELOAD into the agent's instruction context mid-flight is `[UNVERIFIED]`
@@ -92,14 +93,29 @@ client.agents.create(id="my-forked-agent", base_agent="my-gemini-api-agent",
   same `environment_id`."* Cookbook: agent writes `knowledge.md` in turn 1, recalls it in turn 2.
 
 **⚠️ FORGE CAVEAT (be honest on stage):** auto-load is documented as a **startup** event. There is
-**NO documented statement** that a SKILL.md *authored by the agent during a run* is *auto-reloaded
-into its instruction context* on a continued interaction (confirmed ABSENT in custom-agents,
-agent-environment, blog, cookbook). `[UNVERIFIED]`. **SAFE PATTERN:** (1) agent writes
-`/.agents/skills/<idiom>/SKILL.md` into the env; (2) file persists on disk (verified); (3) next run
-starts as a *fresh startup against that env* — either reuse `extra_body={"environment": env_id}` and
-tell the agent to read `/.agents/skills/`, OR fork a refreshed agent with
-`base_environment={"env_id": env_id}` so startup discovery re-registers the forged skill. Do **not**
-claim mid-interaction hot-reload.
+**SKILL.md discovery is a STARTUP/SCAN event — NOT mid-interaction (RESOLVED 2026-05-23).**
+custom-agents.md.txt verbatim: *"Skills loaded from `.agents/skills/` and `/.agents/skills/` are
+both discovered automatically."* · *"Place them under `.agents/skills/<skill-name>/SKILL.md` and the
+harness auto-discovers and registers them."* · *"The Antigravity runtime scans `.agents/` (and the
+root of the environment) for these files."* All three describe a point-in-time scan at init. There is
+**ZERO** "during execution / on demand / at runtime / re-scanned mid-interaction" language anywhere
+(confirmed ABSENT in custom-agents, antigravity-agent, agent-environment, blog, cookbook). So a
+SKILL.md the agent writes mid-run is **NOT** auto-registered as a skill within that same interaction.
+
+➡️ **FORGE self-heal is honestly a TWO-TURN loop:**
+- Turn 1: agent hits unknown idiom → writes `/.agents/skills/<idiom>/SKILL.md` into the env (tests RED).
+- Turn 2: a NEW interaction starts against the SAME `environment_id` (file persists on disk) → that
+  interaction's STARTUP scan registers the new skill → agent retries → GREEN.
+- Within a single turn the agent can still USE what it wrote by `code_execution` reading the file
+  directly (it's on disk), but it is NOT a registered managed "skill" until the next interaction's scan.
+- To bank the skill PERMANENTLY: re-register the agent with it mounted in `base_environment`
+  (or fork `base_environment={"env_id": env_id}` so startup re-discovers it).
+- ❌ DO NOT claim "authors a skill and the harness hot-loads it mid-thought in the same turn" —
+  that's an OVERCLAIM / `[UNVERIFIED]`. The demoable, honest framing is the 2-turn write→rescan→retry.
+- NB: an "...discovered automatically during execution" phrase may appear in SDK *guides*; it was NOT
+  found in the API docs and most likely means on-demand invocation of ALREADY-registered skills
+  (progressive disclosure), not runtime re-scanning of newly authored files. Quote the API-doc
+  scan/auto-discover/register lines, which are unambiguous.
 
 ### C4 — computer_use / file_search ✅ NOT supported (repo honesty claim accurate)
 antigravity-agent.md.txt (verbatim): **Supported** = `code_execution`, `google_search`,
@@ -180,6 +196,23 @@ for event in stream:
 - Retention (verbatim): *"Retained for 7 days since last active. Can be resumed by passing its ID."*
 - Resources (verbatim): *"CPU: 4 cores; Memory: 16 GB"*; Ubuntu + Py3.12 + Node22. Compute free in preview.
 
+### ⚠️ TWO PERSISTENCE BEHAVIORS — do not confuse (RESOLVED 2026-05-23)
+managed-agents-quickstart.md.txt has BOTH of these statements; they apply to DIFFERENT patterns:
+- **Invoking a SAVED agent by ID forks the base env each time** (verbatim): *"Each invocation forks
+  the base environment, so every run starts clean."* → a conda install / forged SKILL.md from one run
+  does NOT carry to the next on this path. To bank a tool/skill permanently here, bake it into
+  `base_environment` at `agents.create` time.
+- **Reusing an EXPLICIT environment_id RESUMES the same sandbox** (verbatim): *"Files from turn 1
+  (`fibonacci.txt`) persist in turn 2"* when you "Pass [the environment_id] ... to resume." →
+  installed packages + files PERSIST.
+- **Practical rule for LAZARUS:** keep ONE long-lived `environment_id` for the whole demo session
+  (pre-warm GnuCOBOL install → COBOL compile → migration → tests → FORGE all in that same ENV via
+  `extra_body={"environment": ENV}`). Do NOT pre-warm into ENV then expect a fresh
+  `environment="remote"` run (or a fresh invoke-by-saved-agent-id) to inherit it — those fork clean.
+- **FORGE corollary:** a forged SKILL.md persists across runs only while you reuse the same env_id;
+  to make it permanent, re-register the agent with it mounted in `base_environment`. (Never claim
+  "persists forever / accumulates across runs" — that's an overclaim. See devils-advocate verdict.)
+
 ## Download produced files (RESOLVED)
 Whole-env tarball via Files API (cookbook, verbatim):
 ```python
@@ -190,9 +223,20 @@ with tarfile.open("snapshot.tar") as tar: tar.extractall("extracted")
 ```
 Extract `/workspace/...` for the migrated module. No `client.environments.download()` helper.
 
-## SDK / install (RESOLVED)
-`pip install -U 'google-genai>=2.0.0'` (cookbook). `from google import genai` →
-`client = genai.Client(api_key=...)`.
+## SDK / install (RESOLVED — exact floor from the official changelog)
+**`pip install -U 'google-genai>=2.4.0'`.** `from google import genai` → `client = genai.Client(api_key=...)`.
+Exact version archaeology (github.com/googleapis/python-genai/blob/main/CHANGELOG.md, verbatim):
+- **1.55.0** (2025-12-11): "Add the Interactions API" — interactions DEBUT (this is where the repo's
+  1.55.0 pin came from; it's too low for everything below).
+- **2.0.0** (2026-05-07): BREAKING (interactions only) — "Add steps for interactions" + "Rename SSE
+  events to interaction.created and interaction.completed". → the `step.*` / `interaction.completed`
+  streaming schema only exists from 2.0.0. A 1.55.0 pin breaks the live trace.
+- **2.3.0** (2026-05-15): "Interaction.{output_text,output_image,...}" → `interaction.output_text` added.
+- **2.4.0** (2026-05-17): "Support Agent and Environment APIs" → **`client.agents`
+  (create/get/list/delete) + the Environment API ship HERE**. Below 2.4.0, `client.agents` does not exist.
+➡️ **Floor = 2.4.0** (covers client.agents + environment + step.* SSE + output_text). REPIN
+requirements.txt + agent.py: `google-genai>=1.55.0` → `google-genai>=2.4.0`. (Cookbook's 2.0.0 is
+also too low for client.agents.)
 
 ## Pricing / quota (RESOLVED)
 - agents.md.txt/blog: *"pay-as-you-go ... based on Gemini model tokens and tool usage"*, *"typically
@@ -246,6 +290,77 @@ Node 20 / network-off" came from the Enterprise GCP product — the wrong produc
   output offline and ship as inline TEXT sources to keep the differential-oracle claim honest if
   live `cobc` install ever fails. (Detailed verification = task #8.)
 
+## TASK #8 — No-root live-install of GnuCOBOL in the antigravity sandbox (RESOLVED 2026-05-23)
+
+### Verified facts
+- **`conda-forge/gnucobol-feedstock` EXISTS** (github.com/conda-forge/gnucobol-feedstock, maintainer
+  @pavelzw, package GPL-3.0). Package name = **`gnucobol`**, builds for **linux-64** (+ osx). Install:
+  `conda install -c conda-forge gnucobol`. Provides the `cobc` compiler. ✅ resolves the prior
+  `[UNVERIFIED]` "is gnucobol on conda-forge" assumption.
+- **Why conda is the right path:** `cobc` translates COBOL→C and then **invokes a C compiler at
+  COMPILE time** (gnucobol FAQ, verbatim: *"GnuCOBOL compiles COBOL into C then compiles the
+  intermediate code with the configured C compiler, usually gcc, into assembler for object code,
+  linked into executable machine code."*). So compiling COBOL in-sandbox needs a C compiler + libcob
+  + gmp PRESENT. The **conda `gnucobol` package pulls its own compiler/libcob/gmp as dependencies**,
+  so it works even if the sandbox has no system gcc — sidesteps the gcc-presence question entirely.
+- **micromamba = userland, no root.** Official installer places it in `~/.local/bin`. Static binary,
+  no root needed. (mamba-org/micromamba-releases.)
+- GnuCOBOL current stable = **3.2** (3.1.2 also referenced); GnuCOBOL 4 in testing.
+
+### ⭐ Recommended recipe — micromamba + conda-forge into a /workspace prefix (no root, persists)
+Run these via the agent's `code_execution` (bash) **during PRE-WARM** (network on):
+```bash
+# 1. Bootstrap micromamba (userland, no root) — curl & wget are pre-installed
+cd /workspace
+curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xvj bin/micromamba
+export MAMBA_ROOT_PREFIX=/workspace/.mamba
+
+# 2. Create a userland env with GnuCOBOL from conda-forge (pulls cobc + C compiler + libcob + gmp)
+/workspace/bin/micromamba create -y -p /workspace/cobol -c conda-forge gnucobol
+
+# 3. Verify cobc works
+/workspace/cobol/bin/cobc --version
+# 4. Compile + run a COBOL program (no system gcc needed; conda toolchain is on the env)
+/workspace/cobol/bin/cobc -x -o /workspace/hello /workspace/hello.cob \
+  && /workspace/hello
+```
+Invoke `cobc` by its absolute path `/workspace/cobol/bin/cobc` (no shell activation needed), OR
+`/workspace/bin/micromamba run -p /workspace/cobol cobc -x program.cob`.
+
+### ⭐ THE DEMO FRAMING that defeats "no network on stage"
+- Network is **unrestricted by default** but the install is the only step that needs it.
+- **PRE-WARM (before going on stage, network on):** run the recipe above in a remote env; capture
+  `interaction.environment_id`.
+- **Persistence:** installed packages + files persist in that env (agent-environment.md.txt verbatim:
+  *"Packages installed during an interaction persist when you reuse the same environment_id."*).
+- **ON STAGE:** reuse the SAME env (`extra_body={"environment": prewarmed_env_id}`). `cobc` is
+  ALREADY installed at `/workspace/cobol/bin/cobc` — the agent compiles + runs COBOL with NO network
+  call required for the toolchain. The live differential oracle (run COBOL vs run migrated Python)
+  works on stage even if conference Wi-Fi is hostile.
+
+### Backup path — build from source (no root)
+If conda is undesirable: `repository` source can git-clone GnuCOBOL *source* (text, ≤500MB), then:
+`./configure --prefix=/workspace/usr && make && make install`, then
+`export PATH=/workspace/usr/bin:$PATH; export LD_LIBRARY_PATH=/workspace/usr/lib:$LD_LIBRARY_PATH`.
+Needs gcc + gmp-dev present. gcc is *likely* present (agent "builds apps") but `[UNVERIFIED]`; gmp
+may be missing → conda path avoids this risk. Static link option exists: `cobc -fstatic-linkage` /
+`cobc -static` (gnucobol FAQ) — but irrelevant once cobc is installed in-env.
+
+### Fallback if ALL live-install fails (oracle stays honest)
+Pre-capture GnuCOBOL ground-truth outputs OFFLINE; ship expected outputs as inline TEXT `sources`;
+diff migrated Python against them. Keeps the "COBOL-as-oracle" claim truthful without live cobc.
+backend-eng (task #4) should wire BOTH: live-compile primary + captured-output fallback.
+
+### Open items for backend-eng to confirm LOCALLY (I have no live sandbox creds)
+- `[UNVERIFIED-but-high-confidence]` exact conda-forge `gnucobol` version pin + that the linux-64
+  build's cobc runs in a vanilla Ubuntu container. Pin a known-good version once tested.
+- micromamba download URL stability — `https://micro.mamba.pm/api/micromamba/linux-64/latest` (or the
+  install script `"${SHELL}" <(curl -L https://micro.mamba.pm/install.sh)`). If `micro.mamba.pm` is
+  ever blocked, mirror via github.com/mamba-org/micromamba-releases.
+Sources: github.com/conda-forge/gnucobol-feedstock; gnucobol.sourceforge.io/faq; github.com/mamba-org/micromamba-releases.
+
 ## Could not fetch
 - YouTube https://www.youtube.com/watch?v=OdrOmc_RX8A — not retrievable as text via WebFetch
   (video page, no transcript). `[UNVERIFIED]` — not used as a source.
+- anaconda.org & mamba.readthedocs.io blocked by fetch policy — used GitHub feedstock + mirrors
+  + search instead to verify the conda-forge `gnucobol` package and micromamba commands.

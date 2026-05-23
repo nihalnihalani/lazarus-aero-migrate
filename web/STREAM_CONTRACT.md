@@ -146,10 +146,31 @@ Managed Agents shape (researcher-agents):
 
 **Streaming events** (`event.event_type`): `step.start` · `step.delta` ·
 `step.stop` · `interaction.created` · `interaction.completed` ·
-`interaction.status_update` · `error`. Feed each SSE event to
-`adaptStreamEvent(event)`; it returns a canonical Event (on `step.stop`) or
-`null` (start/delta/status are buffered/ignored — we render per-step, not
-token-by-token).
+`interaction.status_update` · `error`.
+
+The live trace is a **3-event lifecycle per step**: `step.start` opens a card,
+`step.delta` streams text into it (`event.delta.text`, only when
+`event.delta.type === "text"`), `step.stop` finalizes it. The renderer renders
+one finalized card per step, so drive it with the stateful **`StreamAdapter`**:
+
+```js
+const sa = new StreamAdapter();
+for await (const event of sseStream) {
+  for (const ev of sa.ingest(event)) livePlayer.push(ev);
+}
+```
+
+`StreamAdapter` accumulates `step.delta` text against the open step (keyed by
+`event.index`) and emits the canonical Event on `step.stop`, preferring the
+step's own text but falling back to accumulated deltas (the `step.stop` payload
+may omit the streamed text).
+
+⚠️ Two API caveats baked into the adapter:
+1. `step.stop` may not carry the full streamed text → accumulate deltas (done).
+2. `interaction.completed` arrives "with empty outputs to reduce payload" → do
+   NOT read final text/steps from it; we already have everything from the
+   stream. For the authoritative final object (e.g. `environment_id`, full
+   steps) the orchestrator calls `client.interactions.get(interaction_id)`.
 
 **Step objects** (`event.step.type`) map to the trace as:
 
@@ -161,9 +182,10 @@ token-by-token).
 | `model_output` | `output` | `content[].text` |
 | `user_input` | `status` | `content[].text` |
 
-Exports: `adaptStreamEvent(event)` (live SSE), `adaptStep(step)` (one Step
-object), `adaptInteractionStep(raw)` (back-compat alias), `normalizeRun(run)`
-(mock passthrough + non-streamed payloads).
+Exports: `StreamAdapter` (live SSE lifecycle — preferred), `adaptStreamEvent(event)`
+(stateless single-event convenience, no delta accumulation), `adaptStep(step)`
+(one Step object), `adaptInteractionStep(raw)` (back-compat alias),
+`normalizeRun(run)` (mock passthrough + non-streamed payloads).
 
 **Still pending alignment with backend-eng** (these are NOT raw `interaction.steps`):
 the `business_rule`, `diff`, `pytest`, `oracle`, `forge`, `reload`, and
