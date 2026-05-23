@@ -7,3 +7,5 @@ edit/
 *.mp4
 *.aiff
 *.wav
+# ...but keep the final delivered launch video
+!lazarus_launch.mp4

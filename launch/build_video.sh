@@ -12,11 +12,11 @@ TEMPO="${LAZ_TEMPO:-1.0}"   # >1 speeds narration (Gemini paces slow); slides au
 slides=(01-crisis 02-scale 03-lazarus 04-proof 05-forge 06-google 07-uses 08-close)
 texts=(
 "In 2020, New Jersey's unemployment system collapsed under a sixteen hundred percent surge, and the governor begged for volunteers who could still read COBOL."
-"Sixty years of code still runs our banks, benefits, and hospitals, with business rules nobody wrote down. The cost of that debt: two point four trillion dollars."
+"Sixty years of code still runs our banks, benefits, and hospitals, its business rules undocumented. The cost of that debt: two point four trillion dollars."
 "Meet Lazarus. Drop in legacy COBOL, and it recovers the lost business rules and rewrites them as clean, modern Python."
-"Here is the difference: it does not grade its own homework. Lazarus proves its Python against the original COBOL, through a real compiler, byte for byte. Red, to green."
+"Here's the difference: it does not grade its own homework. It proves the Python against the original COBOL, byte for byte. Red, to green."
 "Hit an idiom it doesn't know? It writes itself a new skill, re-reads it, and retries, until the proof holds."
-"Built on Google's newest: Gemini three point five Flash, with a million token context, and the Managed Agents API, running real code in a live sandbox that keeps the skills it forges."
+"Built on Google's newest: Gemini three point five Flash, a million token context, and the Managed Agents API, running real code in a live sandbox."
 "Government benefits, banking, insurance, healthcare. Anywhere dead code still runs the world."
 "Lazarus. Proven, autonomous modernization."
 )
