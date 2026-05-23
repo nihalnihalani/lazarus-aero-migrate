@@ -23,7 +23,7 @@ investor are in the room and will fact-check every number and every platform cla
 | C7 | NJ impact stats (1600%, 575k, "begged on live TV") | medium (Impact = 20%) | **MIXED** — 1600% CONFIRMED; 575k UNVERIFIED; "live TV" embellished |
 | C8 | $2.41T tech debt; 18–23% wasted; $30B market | medium (Impact = 20%) | **CONFIRMED** (with date caveats) |
 | C9 | "1M-token context" relevance to a ~150-line module | low (framing) | **NEEDS FIX** — non-sequitur a judge will needle |
-| C10 | `MAX_ITERATIONS = 4` "hard cap" + "visible counter" | medium (demo safety) | **NEEDS FIX** — not enforced in code; only prompt text |
+| C10 | `MAX_ITERATIONS = 4` "hard cap" + "visible counter" | medium (demo safety) | **RESOLVED (verified in code)** — agent.py now has a real `range(1, MAX_ITERATIONS+1)` loop + `emit_iteration` counter; server.py forwards it to the UI + `/api/health`. Orchestrator-enforced, not prompt-only. |
 | C11 | agent.py streaming/SDK field names | medium (it runs) | **NEEDS FIX** — guessed schema; verify or it crashes |
 | C12 | Demo determinism / cold-start | medium (Demo = 45%) | **ACCEPTED RISK** — mitigations exist; tighten |
 | C13 | Demo blames "COMP-3" but COMP-3 isn't what fails | medium (signature beat honesty) | **NEEDS FIX (PROVEN) — NOT YET LANDED** — relabel still missing from mock-run.json (drives UI), STREAM_CONTRACT, DEMO, README, ARCHITECTURE, AGENTS.md, test_agent.py. Highest-priority remaining honesty fix. |

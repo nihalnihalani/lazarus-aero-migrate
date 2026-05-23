@@ -1,72 +1,29 @@
-// app.js — entry point.
-//
-// DEFAULT = LIVE: drop a COBOL module → POST to the FastAPI backend → real
-// Gemini Managed Agent stream → live-trace UI → real download. (task #9)
-//
-// FALLBACK = ?mock=1: plays the bundled scripted run (mock/mock-run.json) with
-// no backend. This is the demo Safety net (DEMO_SCRIPT.md de-risking) and the
-// offline rehearsal path — OFF by default, never in the live path.
+// app.js — entry point. LIVE ONLY (task #9): the UI runs completely end-to-end
+// against the real FastAPI backend (src/server.py) → real Gemini Managed Agent.
+// There is NO scripted/mock playback. Drop a COBOL module → real SSE stream →
+// live-trace UI → real download. On any failure, a clear ERROR state — never
+// fake data, never a fallback animation.
 
-import { MockPlayer } from './player.js';
 import { Renderer } from './renderer.js';
-import { createLivePlayer, driveLiveRun } from './live.js';
+import { createLivePlayer, driveLiveRun, checkHealth } from './live.js';
 
 const $ = (s) => document.querySelector(s);
 
-const MOCK = new URLSearchParams(location.search).get('mock') === '1';
-const LIVE_MODE = new URLSearchParams(location.search).get('raw') === '1' ? 'raw' : 'canonical';
-
 const state = {
-  run: null,        // raw mock-run.json (mock fallback only)
-  player: null,
   renderer: new Renderer(document),
-  loaded: false,    // a COBOL module has been dropped/preloaded
-  cobol: null,      // the loaded source (for live re-runs)
+  player: null,
+  live: null,        // { runId, abort } from driveLiveRun
+  cobol: null,       // loaded source
   filename: 'payroll.cob',
-  live: null,       // { player, runId, abort, downloadUrl } from startLiveRun
+  loaded: false,
 };
-
-async function loadMock() {
-  const res = await fetch('./mock/mock-run.json', { cache: 'no-store' });
-  if (!res.ok) throw new Error(`mock-run.json: ${res.status}`);
-  return res.json();
-}
 
 function bindPlayer(player) {
   state.renderer.attach(player);
-  player.on('progress', ({ elapsed, total }) => {
-    const pct = total ? Math.min(100, (elapsed / total) * 100) : 0;
-    $('#scrub-fill').style.width = pct + '%';
-    $('#clock').textContent = fmt(elapsed) + ' / ' + fmt(total);
-  });
-  player.on('state', ({ playing, speed }) => {
-    if (playing != null) $('#play-btn').dataset.playing = String(playing);
-    if (speed != null) {
-      for (const b of document.querySelectorAll('.speed-btn')) {
-        b.classList.toggle('active', Number(b.dataset.speed) === speed);
-      }
-    }
-  });
+  // LivePlayer doesn't emit progress/state (a real stream has no fixed length);
+  // those bindings are intentionally omitted.
 }
 
-function fmt(ms) {
-  const s = Math.max(0, ms / 1000);
-  return s.toFixed(1) + 's';
-}
-
-// --- mock fallback run -----------------------------------------------------
-function startMockRun() {
-  if (!state.run) return;
-  if (state.player) state.player.pause();
-  state.player = new MockPlayer(state.run);
-  bindPlayer(state.player);
-  state.renderer.reset(state.player.meta);
-  $('#meta-module').textContent = state.player.meta.module || 'payroll.cob';
-  $('#meta-agent').textContent = state.player.meta.base_agent || 'lazarus';
-  state.player.play();
-}
-
-// --- live run --------------------------------------------------------------
 async function startLive() {
   if (!state.cobol) return;
   if (state.live) state.live.abort();
@@ -76,25 +33,15 @@ async function startLive() {
   $('#play-btn').dataset.playing = 'true';
   $('#clock').textContent = 'live';
 
-  // Create + ATTACH + reset BEFORE driving the run, so the first pushed event
-  // (including a backend-unreachable error) renders into a clean trace.
+  // Attach + reset BEFORE driving so the first event (incl. a fatal error) renders.
   state.player = createLivePlayer({ iteration_cap: 4, module: state.filename });
   bindPlayer(state.player);
   state.renderer.reset({ iteration_cap: 4, module: state.filename });
 
-  state.live = await driveLiveRun(state.player, state.cobol, state.filename, { mode: LIVE_MODE });
-  if (state.live.runId) {
-    // Live download pulls the real artifact from the backend by run_id.
-    state.renderer.setDownloadUrl(state.live.downloadUrl, state.filename.replace(/\.cob$/, '.py'));
-    $('#meta-status').textContent = `live · run ${state.live.runId}`;
-  } else {
-    $('#meta-status').textContent = 'backend unreachable — see trace (or use ?mock=1)';
-  }
-}
-
-function startRun() {
-  if (MOCK) startMockRun();
-  else startLive();
+  state.live = await driveLiveRun(state.player, state.cobol, state.filename);
+  $('#meta-status').textContent = state.live.runId
+    ? `live · run ${state.live.runId}`
+    : 'live';
 }
 
 function showCobolPreview(text) {
@@ -110,7 +57,7 @@ function onCobolLoaded(text, name) {
   showCobolPreview(text);
   $('#drop-name').textContent = name;
   $('#stage').classList.add('armed');
-  startRun();
+  startLive();
 }
 
 function wireDropzone() {
@@ -145,52 +92,42 @@ function wireDropzone() {
       onCobolLoaded(text, 'payroll.cob');
     } catch (err) {
       console.error(err);
+      $('#meta-status').textContent = 'could not load sample (serve over http)';
     }
   });
 }
 
 function wireControls() {
-  $('#play-btn').addEventListener('click', () => {
-    // In live mode there's no pause/resume of a stream; (re)start the run.
-    if (MOCK && state.player) { state.player.toggle(); return; }
-    if (state.loaded) startRun();
-  });
-  $('#restart-btn').addEventListener('click', () => state.loaded && startRun());
-  $('#skip-btn').addEventListener('click', () => MOCK && state.player && state.player.finish());
-  for (const b of document.querySelectorAll('.speed-btn')) {
-    b.addEventListener('click', () => MOCK && state.player && state.player.setSpeed(Number(b.dataset.speed)));
-  }
+  // Live stream: ▶ / restart (re)run the migration. There is no pause/scrub of
+  // a live stream — those timeline controls are hidden in CSS.
+  $('#play-btn').addEventListener('click', () => state.loaded && startLive());
+  $('#restart-btn').addEventListener('click', () => state.loaded && startLive());
   $('#download-btn').addEventListener('click', () => state.renderer.triggerDownload());
 
-  // Keyboard (rehearsal): space=play/restart, r=restart, f=finish (mock only).
   document.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT') return;
-    if (e.code === 'Space') { e.preventDefault(); (MOCK && state.player) ? state.player.toggle() : (state.loaded && startRun()); }
-    if (e.key === 'r') state.loaded && startRun();
-    if (e.key === 'f') MOCK && state.player && state.player.finish();
+    if (e.code === 'Space') { e.preventDefault(); state.loaded && startLive(); }
+    if (e.key === 'r') state.loaded && startLive();
   });
 }
 
 async function main() {
+  document.body.classList.add('mode-live');
   wireDropzone();
   wireControls();
   state.renderer.reset({ iteration_cap: 4 });
+  $('#clock').textContent = 'live';
 
-  if (MOCK) {
-    // Fallback path: preload the scripted run, no backend needed.
-    document.body.classList.add('mode-mock');
-    try {
-      state.run = await loadMock();
-      $('#meta-status').textContent = 'FALLBACK (mock) · drop a module to begin';
-    } catch (err) {
-      console.error(err);
-      $('#meta-status').textContent = 'could not load mock-run.json (serve over http)';
-    }
+  // Probe the backend so the operator sees the real state before dropping a file.
+  const h = await checkHealth();
+  if (!h.ok) {
+    $('#meta-status').textContent = 'backend offline — start: uvicorn server:app --app-dir src';
+    document.body.classList.add('backend-down');
+  } else if (!h.keyPresent) {
+    $('#meta-status').textContent = 'LIVE · no GEMINI_API_KEY — set it to run the agent';
+    document.body.classList.add('no-key');
   } else {
-    // Live default: no preload; transport timeline is hidden (stream has no fixed length).
-    document.body.classList.add('mode-live');
     $('#meta-status').textContent = 'LIVE · drop a COBOL module to migrate';
-    $('#clock').textContent = 'live';
   }
 }
 
