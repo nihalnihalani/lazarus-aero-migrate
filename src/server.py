@@ -167,8 +167,12 @@ def _run_oracle_pytest(migrated_src: str, iteration: int = 1) -> dict | None:
     (per-case cobol-vs-python) labeled as the differential-oracle harness — so the RED->GREEN
     panel populates from REAL output regardless of whether the agent printed a marker.
 
-    Returns None if the golden capture is missing or the module won't run (so the caller can
-    fall back to a coarse verdict rather than emit a misleading green/red).
+    Failure modes are kept HONEST (so a broken module never looks falsely green):
+      * golden capture missing/unreadable -> None (the harness genuinely can't run; the
+        caller falls back to the coarse prose verdict).
+      * the agent's module won't RUN (crash / non-zero exit / timeout) -> an explicit RED
+        pytest event noting the oracle couldn't execute it, NEVER None. Otherwise an agent
+        that crashes but claims "all tests pass" would slip through as a prose-only green.
     """
     golden = SAMPLE_DIR / "golden_io.json"
     if not golden.exists():
@@ -178,10 +182,20 @@ def _run_oracle_pytest(migrated_src: str, iteration: int = 1) -> dict | None:
         with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as fh:
             fh.write(migrated_src)
             py_tmp = fh.name
-        records = differential_oracle.prove_equivalence(py_tmp, str(golden))
+        try:
+            records = differential_oracle.prove_equivalence(py_tmp, str(golden))
+        except Exception as e:
+            # The module itself failed to run under the oracle -> explicit RED, not None.
+            return {
+                "type": "pytest",
+                "result": "red",
+                "iteration": iteration,
+                "source": "differential_oracle",
+                "summary": (f"differential oracle could not run the agent's payroll.py: "
+                            f"{type(e).__name__}: {e}".strip()[:300]),
+                "cases": [],
+            }
         return event_transform.oracle_harness_pytest_event(records, iteration=iteration)
-    except Exception:
-        return None  # module crashed / golden unreadable -> caller uses the coarse verdict
     finally:
         if py_tmp:
             try:
