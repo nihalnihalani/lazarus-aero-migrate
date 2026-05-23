@@ -1272,3 +1272,17 @@ ever errors: a TRANSIENT unrelated error containing a matched substring would be
 succeeds (transient cleared) a real error is masked + THINKING_REJECTED falsely set. (The "retry re-raises" defense
 holds only for DETERMINISTIC errors, not transient.) Cheap optional hardening offered (narrow to specific
 agent_config/thinking signatures). Not gating — flagged for the record.
+
+## L29 — RESOLVED with hard evidence from BOTH interpreters: the pin IS satisfied; tests run on 2.6.0
+frontend-eng escalated "installed SDK is 1.73.1, below the >=2.6.0 pin → all our SDK-shape claims verified on the
+wrong version." I ran BOTH interpreters to settle it:
+- `.venv/bin/python` → google-genai 2.6.0 → GoogleSearchCallStep=True, *Content=False
+- system `python3`   → google-genai 1.73.1 → GoogleSearchCallStep=False, *Content=True
+- `pytest` sys.executable = `.venv/bin/python` → THE SUITE RUNS ON 2.6.0.
+CONCLUSION: the .venv HAS the pinned 2.6.0; unit tests + all my L17/L18 static checks ran on 2.6.0 (correct).
+frontend read SYSTEM python3 (1.73.1) — the box has BOTH SDKs under different interpreters; the system one is
+irrelevant. NO provenance gap under "verified on SDK" claims — they're on the pin. Only stray system-python3
+probes (frontend's earlier comment; qa's early "400 every shape") were on 1.73.1. Matches repo memory
+[[sdk-version-provenance-gap]]. Do NOT lower the pin or re-verify on 1.73.1. **L29 resolved: shipped path verified
+on the pinned SDK. The standing gate rule (qa stamp 2.6.x on LIVE receipts) is now ONLY about confirming qa's LIVE
+runs used .venv — the unit tests + my static checks are confirmed on 2.6.0.**
