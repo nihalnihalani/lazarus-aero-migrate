@@ -1170,3 +1170,40 @@ flags-off byte-identical confirmed):
 - L26 function_call breadcrumb: `🛠 <name>` surfaces the internal tool name live (auditable).
 So on qa's NEXT grounding run the count prints in-band — #1's receipt is now self-producing. My L25 honesty
 framing ("opportunistic consult, not the driver") is baked into the trace string verbatim. Good.
+
+---
+
+# ===== DEVIL'S-ADVOCATE SIGN-OFF CRITERIA (the exact gate) =====
+
+CLEARED (mine-verified, not relayed):
+- [x] REGRESSION: all flags OFF byte-identical to main — _build_prompt, _build_forge_retry_prompt,
+      build_base_environment, interaction kwargs {agent,extra_body,input,stream} (no agent_config/
+      generation_config), ensure_agent clean-fork no-op, grounding_tool_count gated off. (re-verified each HEAD)
+- [x] FALSIFIABILITY: server.py / differential_oracle.py / event_transform.py UNTOUCHED on the branch →
+      verdict tracks the oracle, not the agent; the 4 falsifiability tests pass.
+- [x] NO unsupported-surface reach: we register ZERO user functions/tools (L26) → function_call blocks are
+      runtime-internal routing, §3 "function_calling not used" holds. No structured-output/mcp/file_search/
+      computer_use/sub-agents. No model-vs-agent capability conflation.
+- [x] SUITE green & deterministic (154 at last check), incl. the real-SDK breadcrumb guard (L17).
+- [x] #4 whole-codebase: code + CLI entry verified (L23 opt-a); honest scope caveat recorded (recovery
+      showcase, NOT oracle-byte-verified — single-module golden).
+- [x] #2 thinking USER-FACING claim: "no depth control; thinking runs at default" is honest; shipped trace
+      makes zero control implication; bare false [thinking_level=X] marker is gone.
+- [x] Honesty instrumentation (grounding count, 🛠 names) landed, gated, honestly framed.
+
+PENDING (RELAYED → must become SEEN before I sign; all are qa live receipts I can't self-produce):
+- [ ] L28: qa probes the EXACT committed shape agent_config={"type":"dynamic","thinking_level":"high"} on
+      google-genai 2.6.0 (the pin) → raw HTTP status (200 vs 400) + high-vs-minimal thought tokens + version
+      string. Locks the #2 MECHANISM wording (accepted-but-ignored vs rejected; THINKING_REJECTED live/dead).
+      [merge not blocked on which; wording must match]
+- [ ] #1 grounding: one live run's [grounding_tool_count=N ...] line with N>0 (or an honest N==0 stated).
+- [ ] #3 cross-run BANKING half: a forge run where the agent echoes the SKILL.md body → banked
+      .agents/skills/<name>/SKILL.md on disk (discovery half already accepted: sentinel == prior ZARFLAX live).
+- [ ] #4: the PAYMAIN→TAXSUB cross-module LAZARUS_RULE text + which golden the oracle used.
+
+DOCS PASS (team-lead owns, post-verdict): DEMO_SCRIPT:54 "pin thinking level" reword; README:83 cross-run
+framing; grounding-is-opportunistic (L25) line; "#4 is CLI/API, web is single-file" note; function_call-
+envelope honesty line (L26); #2 wording = accepted-but-ignored (NOT "400 rejected"), pending L28.
+
+When the 4 PENDING boxes are checked from evidence I've SEEN, I issue FULL per-feature sign-off and the merge
+of feature/agent-capabilities → main is cleared.
