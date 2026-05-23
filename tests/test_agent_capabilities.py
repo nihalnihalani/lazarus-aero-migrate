@@ -343,24 +343,37 @@ def test_grounding_breadcrumbs_use_real_sdk_types(agent_mod):
         pytest.skip("google.genai._interactions.types not importable in this SDK")
     it = _SDK_ITX_TYPES
 
-    # The real SDK content classes are *CallContent / *ResultContent — there is NO *Step type
-    # in google.genai._interactions.types (verified: dir() lists GoogleSearchCallContent,
-    # URLContextCallContent, URLContextResultContent; the model_validate of *Step raises
-    # AttributeError). _tool_breadcrumb reads step.type + step.arguments.{queries,urls} /
-    # step.result[].{url,status}, which these content classes carry.
-    sc = it.GoogleSearchCallContent.model_validate({
+    # Resolve the real SDK class name regardless of the suffix the SDK ships (this test got
+    # flip-flopped between *Step and *Content). EMPIRICALLY, in the installed google-genai
+    # 2.6.0 the classes are GoogleSearchCallStep / URLContextCallStep / URLContextResultStep
+    # (a `*Content` lookup raises AttributeError -> "Did you mean: 'GoogleSearchCallStep'?").
+    # We pick whichever attribute exists so a future SDK rename can't re-break the guard; the
+    # POINT of the test is the FIELD shapes (plural arguments.queries/urls, result[].url+status),
+    # which _tool_breadcrumb must read — that's what caught DA L17.
+    def _sdk(*candidates):
+        for name in candidates:
+            cls = getattr(it, name, None)
+            if cls is not None:
+                return cls
+        pytest.skip(f"none of {candidates} present in this SDK")
+
+    GoogleSearchCall = _sdk("GoogleSearchCallStep", "GoogleSearchCallContent")
+    URLContextCall = _sdk("URLContextCallStep", "URLContextCallContent")
+    URLContextResult = _sdk("URLContextResultStep", "URLContextResultContent")
+
+    sc = GoogleSearchCall.model_validate({
         "id": "c1", "type": "google_search_call",
         "arguments": {"queries": ["COBOL ROUNDED rounding mode"]}})
     assert sc.arguments.queries == ["COBOL ROUNDED rounding mode"]   # real SDK field, plural
     assert agent_mod._tool_breadcrumb(sc) == "🔎 COBOL ROUNDED rounding mode"
 
-    uc = it.URLContextCallContent.model_validate({
+    uc = URLContextCall.model_validate({
         "id": "c2", "type": "url_context_call",
         "arguments": {"urls": ["https://example.com/cobol"]}})
     assert uc.arguments.urls == ["https://example.com/cobol"]        # real SDK field, plural
     assert agent_mod._tool_breadcrumb(uc) == "🌐 https://example.com/cobol"
 
-    ur = it.URLContextResultContent.model_validate({
+    ur = URLContextResult.model_validate({
         "call_id": "c2", "type": "url_context_result",
         "result": [{"url": "https://example.com/cobol", "status": "success"}]})
     crumb = agent_mod._tool_breadcrumb(ur)
