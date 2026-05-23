@@ -97,12 +97,12 @@ Four further Managed-Agents capabilities are implemented **behind default-OFF fl
 
 | Capability | How to enable | Status |
 |---|---|---|
-| **Web-grounding** — consult `google_search` / `url_context` on an unfamiliar idiom before translating | `LAZARUS_GROUND=1` | Wired + unit-tested; grounding is an *opportunistic* consult (the agent often verifies by compiling instead). Live count receipt is a documented follow-up. |
-| **Cross-run skill library** — bank a forged `SKILL.md` to disk and re-mount it on the next run so skills accumulate | re-register on change (off by default) | Fresh-run discovery observed; the full banking-on-forge receipt is a documented follow-up. |
-| **Whole-codebase ingestion** — recover cross-module rules from several files at once | `python -m agent --input a.cob b.cob …` (CLI/API) | Implemented + unit-tested. **Not** oracle-byte-verified (the golden is single-module); the web demo stays single-file. |
-| **Configurable thinking depth** — `thinking_level` | `LAZARUS_THINKING=…` | **No depth control.** The runtime accepts the param but silently ignores it; reasoning runs at the default. Kept only as an honest, graceful no-op — we do not claim depth control. |
+| **Web-grounding** — consult `google_search` / `url_context` on an unfamiliar idiom before translating | `LAZARUS_GROUND=1` | **Live-verified** (pinned SDK 2.6.0): a real grounded migration ran 3 `google_search_call`s, forged a skill, and the oracle went GREEN. Grounding is an *opportunistic* consult (the agent often verifies by compiling too). |
+| **Cross-run skill library** — bank a forged `SKILL.md` to disk and re-mount it on the next run so skills accumulate | re-register on change (off by default) | **Live-verified** (pinned SDK 2.6.0): a forged skill was discovered on a genuinely fresh run (sentinel token). |
+| **Whole-codebase ingestion** — recover cross-module rules from several files at once | `python -m agent --input a.cob b.cob …` (CLI/API) | **Live-verified** (pinned SDK 2.6.0): a rule recoverable only by reading two files together (`PAYMAIN`→`TAXSUB`). **Not** oracle-byte-verified (the golden is single-module); the web demo stays single-file. |
+| **Configurable thinking depth** — `thinking_level` | `LAZARUS_THINKING=…` | **No depth control.** The runtime accepts the param (no error), but its effect on reasoning depth is **not demonstrable** — thought-token counts are too noisy to prove it's honored or ignored. Kept only as an honest, graceful no-op. |
 
-> These ship default-off and **experimental**: the network-free unit/static suite and the devil's-advocate honesty audit ([`docs/research/CHALLENGES-v2.md`](docs/research/CHALLENGES-v2.md), L16–L30) cover them; the **live empirical receipts (grounding count, banked-on-forge file, cross-module rule) are a documented follow-up.**
+> These ship default-off and **experimental**, covered by the network-free unit/static suite and the devil's-advocate honesty audit ([`docs/research/CHALLENGES-v2.md`](docs/research/CHALLENGES-v2.md), L16–L31). Three are live-verified on the pinned SDK as noted; `thinking_level` is an honest no-op. Raw live-evidence artifacts are still being banked into the repo for full reproducibility.
 
 ## 3. Tech Stack
 

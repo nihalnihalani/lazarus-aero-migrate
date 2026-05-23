@@ -694,10 +694,11 @@ def _looks_like_thinking_rejection(exc: Exception) -> bool:
 
     The OTHER thinking shapes (top-level generation_config / extra_body variants) 400 on the
     agent path; the SHIPPED agent_config={"type":"dynamic","thinking_level": …} shape is
-    ACCEPTED but the depth is IGNORED (qa live: thought-token counts don't track the level —
-    high ≈ 2096 < minimal ≈ 2408). This heuristic + the retry are DEFENSIVE-ONLY insurance for
-    a future runtime that starts rejecting the param — NOT the observed live behavior (the
-    shipped shape returns 200, so this branch is dead on the live path today).
+    ACCEPTED (no 400), but whether the depth is honored is NOT demonstrable (qa live final:
+    thought-token counts are too noisy — ±~1000 — to prove the level is honored or ignored).
+    This heuristic + the retry are DEFENSIVE-ONLY insurance for a future runtime that starts
+    rejecting the param — NOT the observed live behavior (the shipped shape returns 200, so
+    this branch is dead on the live path today).
 
     NARROW BY DESIGN (DA L30 hardening): we require the error message to name the
     thinking/agent_config FIELD itself — NOT a generic "invalid argument"/"unsupported"
@@ -728,11 +729,12 @@ def _thinking_agent_config(level: str) -> dict:
       * DynamicAgentConfigParam requires {"type": "dynamic"} and allows extra items
         (TypedDict total=False, extra_items=object), so the flat thinking_level rides on it.
 
-    HONESTY (qa LIVE FINDING, merge-blocking): the managed-agent runtime ACCEPTS this shape
-    (no 400) but does NOT honor the requested depth — qa measured thought-token counts that do
-    NOT track the level (high ≈ minimal, often FEWER). Thinking runs at the runtime default
-    regardless. So we send the documented param as an honest "we tried the documented knob,"
-    but the trace must NEVER imply the level took effect. See _create_interaction_stream.
+    HONESTY (qa LIVE FINAL): the managed-agent runtime ACCEPTS this shape (no 400), but whether
+    it honors the requested depth is INCONCLUSIVE — thought-token counts are noise-dominated
+    (±~1000) and non-monotonic across levels, so they prove NEITHER honored nor ignored at
+    feasible sample sizes. So we send the documented param as an honest "we tried the documented
+    knob," but the trace must NEVER imply the level took effect — and must not claim it was
+    ignored either. See _create_interaction_stream.
     """
     return {"type": "dynamic", "thinking_level": level}
 
@@ -744,12 +746,12 @@ def _create_interaction_stream(client: genai.Client, *, input_text: str, environ
 
     When a non-default level IS configured we attach the SDK-correct, documented agent-path
     shape agent_config={"type":"dynamic","thinking_level": <lvl>} (flat thinking_level, NOT
-    generation_config — see _thinking_agent_config). HONEST OUTCOME (qa live): the runtime
-    ACCEPTS the param but does NOT honor depth — thinking runs at the default and thought-token
-    counts don't track the level. So the trace line states exactly that and implies ZERO
-    control. The rejection branch below is a DEFENSIVE fallback only: the shipped shape is
-    accepted (no 400), so it is NOT the observed live behavior — kept in case a future runtime
-    starts rejecting the param. Returns the stream iterator.
+    generation_config — see _thinking_agent_config). HONEST OUTCOME (qa live final): the runtime
+    ACCEPTS the param (no 400), but the effect on reasoning depth is NOT demonstrable —
+    thought-token counts are too noisy (±~1000) to prove the level is honored OR ignored. So the
+    trace line claims ZERO depth control. The rejection branch below is a DEFENSIVE fallback
+    only: the shipped shape is accepted (no 400), so it is NOT the observed live behavior — kept
+    in case a future runtime starts rejecting the param. Returns the stream iterator.
     """
     base_kwargs = dict(
         agent=AGENT_ID,
@@ -766,11 +768,13 @@ def _create_interaction_stream(client: genai.Client, *, input_text: str, environ
     thinking_kwargs["agent_config"] = _thinking_agent_config(level)
     try:
         stream = client.interactions.create(**thinking_kwargs)
-        # HONEST label (qa live: param accepted but depth NOT honored). Never imply control.
+        # HONEST label (qa live final: param accepted, no error; effect on depth NOT
+        # demonstrable — thought-token counts too noisy to prove honored or ignored).
+        # Never imply control.
         emit_to_ui(
-            f"[requested thinking_level={level} — the agent runtime ACCEPTS the param but "
-            "does NOT honor depth: thinking runs at the default and thought-token counts "
-            "don't track the level]\n"
+            f"[requested thinking_level={level} — the agent runtime ACCEPTS the param (no "
+            "error), but we cannot demonstrate it changes reasoning depth: thought-token "
+            "counts are too noisy to show the level is honored or ignored. No depth control.]\n"
         )
         return stream
     except Exception as exc:
@@ -848,13 +852,14 @@ def _run_interaction(client: genai.Client, *, input_text: str, environment):
             env_id = extract_environment_id(completed) or env_id
             interaction_id = getattr(completed, "id", None) or interaction_id
             # Surface thinking token usage (Feature 2) if the runtime reports it. HONEST framing
-            # (qa live): this is evidence the agent THOUGHT, NOT that our requested level applied
-            # — the count does not track the requested depth. No-op when usage/field is absent.
+            # (qa live final): this is evidence the agent THOUGHT, NOT that our requested level
+            # applied — the count is too noisy to show the level took effect. No-op when absent.
             tok = _thought_tokens(completed)
             if tok:
                 emit_to_ui(
                     f"[thought_tokens={tok} — evidence the agent thought; NOT evidence the "
-                    "requested thinking_level applied (counts don't track the level)]\n"
+                    "requested thinking_level applied (counts too noisy to show the level "
+                    "took effect)]\n"
                 )
 
     # Grounding histogram (DA L25): when grounding is ON, report how many web-tool calls

@@ -516,10 +516,10 @@ def test_grounding_tool_count_absent_when_grounding_off(agent_mod, monkeypatch):
 #     MODEL-path only; thinking_level is FLAT — there is no nested thinking_config in the
 #     interactions types. qa proved the runtime rejects a `generation_config` on the agent path,
 #     which is why we use agent_config.)
-#   * LIVE BEHAVIOR (qa-measured): the well-formed agent_config above is ACCEPTED (no 400) but
-#     SILENTLY IGNORED — thinking runs at the default and thought-token counts do NOT track the
-#     requested level. So these tests assert the WIRE SHAPE we send, NOT that the level controls
-#     model depth (it does not). No label here may imply depth control.
+#   * LIVE BEHAVIOR (qa final): the well-formed agent_config above is ACCEPTED (no 400); whether
+#     the level is honored is INCONCLUSIVE — thought-token counts are noise-dominated (±~1000) and
+#     non-monotonic, so they prove neither honored nor ignored. So these tests assert the WIRE
+#     SHAPE we send, NOT that the level controls model depth. No label here may imply depth control.
 #   * The reject->fallback path (THINKING_REJECTED + retry WITHOUT agent_config) is DEFENSIVE
 #     insurance for a hypothetical future runtime that rejects the param; it is NOT the observed
 #     live behavior (the shipped shape is accepted), so its test is labeled accordingly.
@@ -597,9 +597,10 @@ def test_thinking_case_insensitive(agent_mod, tmp_path, monkeypatch):
 
 
 def test_thinking_rejection_falls_back_without_agent_config(agent_mod, monkeypatch):
-    """DEFENSIVE path (NOT the observed live behavior). qa measured that the agent runtime
-    ACCEPTS the well-formed agent_config (no 400) and just silently ignores it — so in
-    practice this fallback never fires today. This test proves the SAFETY NET: IF a future
+    """DEFENSIVE path (NOT the observed live behavior). qa's final: the agent runtime ACCEPTS
+    the well-formed agent_config (no 400) — it does not reject it — so in practice this fallback
+    never fires today (whether the level is honored is a separate, inconclusive question). This
+    test proves the SAFETY NET: IF a future
     runtime DID reject the thinking-bearing create(), the driver retries WITHOUT agent_config
     (graceful no-op), sets THINKING_REJECTED, and the run still completes. Simulated with a
     client whose first create() (carrying agent_config) raises a rejection and whose retry
@@ -617,7 +618,7 @@ def test_thinking_rejection_falls_back_without_agent_config(agent_mod, monkeypat
                 _RejectingClient.interactions.calls.append(kwargs)
                 if "agent_config" in kwargs:
                     # SIMULATED rejection (a hypothetical future runtime). Live, qa saw the
-                    # opposite: agent_config is ACCEPTED (no 400) and silently ignored.
+                    # opposite: agent_config is ACCEPTED (no 400); honored-or-not is inconclusive.
                     raise ValueError("Unknown parameter: agent_config.thinking_level")
                 def _stream():
                     yield types.SimpleNamespace(event_type="interaction.completed",
@@ -643,8 +644,8 @@ def test_thinking_accepted_path_no_fallback_no_reject_flag(agent_mod, monkeypatc
     (no 400). So the happy path issues exactly ONE create() carrying the agent_config, takes NO
     fallback, and leaves THINKING_REJECTED False. This is what actually happens today; the
     rejection test above is only the defensive net. (Note: this proves the param is SENT and
-    ACCEPTED — it deliberately does NOT assert the level changes model depth, because qa
-    measured that it does not.)"""
+    ACCEPTED — it deliberately does NOT assert the level changes model depth, because qa's
+    measurement of that was inconclusive (noise-dominated).)"""
     monkeypatch.setenv("LAZARUS_THINKING", "high")
     agent_mod.THINKING_REJECTED = False
 
