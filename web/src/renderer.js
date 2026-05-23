@@ -47,8 +47,77 @@ export class Renderer {
       oracleBanner: $('#oracle-banner', root),
       verdictBadge: $('#verdict-badge', root),
       stage: $('#stage', root),
+      // progressive-reveal scaffolding
+      flow: $('#flow', root),
+      flowIdle: $('#flow-idle', root),
+      working: $('#working', root),
+      workingPhase: $('#working-phase', root),
+      workingAction: $('#working-action', root),
+      workingIter: $('#working-iter', root),
     };
     this.artifact = null;
+  }
+
+  // --- progressive reveal helpers -----------------------------------------
+  // Map a phase key to the card it should emphasize. Several phases share a
+  // card (e.g. oracle/diagnose surface in the proof card); these mark the
+  // active beat so the right card glows, without revealing empty cards.
+  static PHASE_CARD = {
+    recover: 'recover', translate: 'translate', oracle: 'test', test: 'test',
+    diagnose: 'test', forge: 'forge', reload: 'forge',
+  };
+
+  /** Reveal a step card (it now has real data) and accumulate it in the flow. */
+  _revealCard(when) {
+    const card = $(`.card[data-when="${when}"]`, this.root);
+    if (card && !card.classList.contains('has-data')) {
+      card.classList.add('has-data');
+      requestAnimationFrame(() => card.classList.add('in'));
+    }
+    if (this.refs.flowIdle) this.refs.flowIdle.classList.add('gone');
+  }
+
+  /** Emphasize the card for the current phase; quiet the others. */
+  _setActiveCard(phase) {
+    const want = Renderer.PHASE_CARD[phase] || null;
+    for (const card of this.refs.flow.querySelectorAll('.card')) {
+      card.classList.toggle('active', card.dataset.when === want);
+    }
+  }
+
+  /** Update the persistent WORKING banner (current phase + latest action).
+   *  The banner already says "agent working", so retire the idle placeholder
+   *  once it's up — but keep any revealed cards. Never a blank screen. */
+  _setWorking({ phase, action, iteration } = {}) {
+    const r = this.refs;
+    if (!r.working) return;
+    r.working.hidden = false;
+    if (r.flowIdle) r.flowIdle.classList.add('gone');
+    if (phase != null) r.workingPhase.textContent = phase;
+    if (action != null) r.workingAction.textContent = action;
+    if (iteration != null) r.workingIter.textContent = iteration ? `iter ${iteration}` : '';
+  }
+
+  /** Stop the WORKING banner (run finished or errored). */
+  _stopWorking() {
+    if (this.refs.working) this.refs.working.hidden = true;
+    this._setActiveCard(null);
+  }
+
+  /** Surface a fatal error front-and-center in the flow so the main area is
+   *  never blank — even if it arrives before any panel got data. */
+  _showFlowError(title, text) {
+    const r = this.refs;
+    if (!r.flowIdle) return;
+    const hasCards = r.flow.querySelector('.card.has-data');
+    if (hasCards) return;   // cards already tell the story; the trace shows the error
+    r.flowIdle.classList.remove('gone', 'is-error');
+    r.flowIdle.classList.add('is-error');
+    r.flowIdle.innerHTML =
+      `<div class="flow-error">` +
+      `<div class="flow-error-title">${escapeText(title || 'run failed')}</div>` +
+      (text ? `<div class="flow-error-text">${escapeText(text)}</div>` : '') +
+      `</div>`;
   }
 
   /** Wire to a player; returns an unsubscribe fn. */
@@ -83,6 +152,22 @@ export class Renderer {
     r.verdictBadge.textContent = '';
     r.stage.dataset.phase = '';
     this.artifact = null;
+    // reset progressive reveal: hide every card until it has real data
+    for (const card of r.flow.querySelectorAll('.card')) {
+      card.classList.remove('has-data', 'in', 'active', 'pulse-green', 'pulse-red', 'forging', 'reloaded');
+    }
+    if (r.flowIdle) {
+      r.flowIdle.classList.remove('gone', 'is-error');
+      r.flowIdle.innerHTML =
+        '<span class="spinner" aria-hidden="true"></span>' +
+        '<span>Agent waking up in a live sandbox…</span>';
+    }
+    if (r.working) {
+      r.working.hidden = true;
+      r.workingPhase.textContent = 'working…';
+      r.workingAction.textContent = '';
+      r.workingIter.textContent = '';
+    }
     this._buildRail();
   }
 
@@ -119,6 +204,9 @@ export class Renderer {
       }
     }
     if (ev.iteration != null) r.iterCounter.textContent = ev.iteration;
+    // progressive reveal: emphasize the card for this phase + drive the WORKING banner
+    this._setActiveCard(ev.phase);
+    this._setWorking({ phase: ev.label || ev.phase, iteration: ev.iteration });
   }
 
   // --- (b) agent-working trace --------------------------------------------
@@ -146,6 +234,16 @@ export class Renderer {
     r.trace.appendChild(card);
     requestAnimationFrame(() => card.classList.add('in'));
     r.trace.scrollTop = r.trace.scrollHeight;
+
+    // surface the latest agent action in the WORKING banner so a long live
+    // run never looks frozen. A fatal error step stops the banner instead.
+    if (ev.status === 'error') {
+      this._stopWorking();
+      this._showFlowError(ev.title, ev.text);
+    } else {
+      const line = ev.title || ev.text || '';
+      this._setWorking({ action: line.length > 120 ? line.slice(0, 117) + '…' : line });
+    }
   }
 
   // --- (c) business rules --------------------------------------------------
@@ -162,11 +260,13 @@ export class Renderer {
     r.rules.appendChild(card);
     requestAnimationFrame(() => card.classList.add('in'));
     r.ruleCount.textContent = r.rules.children.length;
+    this._revealCard('recover');
   }
 
   // --- (d) diff viewer -----------------------------------------------------
   on_diff(ev) {
     const r = this.refs;
+    this._revealCard('translate');
     this._renderSide(r.diffLeft, r.diffLeftName, ev.left, ev.links, 'left');
     this._renderSide(r.diffRight, r.diffRightName, ev.right, ev.links, 'right');
     // flash to signal an update (re-translation after forge)
@@ -200,6 +300,7 @@ export class Renderer {
   // --- (e) pytest terminal -------------------------------------------------
   on_pytest(ev) {
     const r = this.refs;
+    this._revealCard('test');
     if (ev.result === 'running') {
       r.term.innerHTML =
         `<div class="term-line">$ pytest -q test_equivalence.py  <span class="term-iter">[iter ${ev.iteration}]</span></div>` +
@@ -246,6 +347,7 @@ export class Renderer {
   // --- (the oracle money-shot banner) -------------------------------------
   on_oracle(ev) {
     const r = this.refs;
+    this._revealCard('test');
     r.oracleBanner.innerHTML =
       `<span class="oracle-tag">DIFFERENTIAL ORACLE</span>` +
       `<span class="oracle-text">Ground truth = <strong>${escapeText(ev.compiler)}</strong> running the original COBOL · ` +
@@ -258,6 +360,7 @@ export class Renderer {
 
   on_forge(ev) {
     const r = this.refs;
+    this._revealCard('forge');
     r.forgeReason.textContent = ev.reason || '';
     r.forge.innerHTML = '';
 
@@ -319,6 +422,8 @@ export class Renderer {
     r.verdictBadge.textContent = ev.verdict || 'EQUIVALENT';
     r.verdictBadge.classList.add('show', 'good');
     r.stage.dataset.phase = 'done';
+    // run finished: drop the WORKING banner; let every revealed card rest equally.
+    this._stopWorking();
     // mark whole rail complete
     for (const node of r.rail.children) {
       node.classList.add('past');

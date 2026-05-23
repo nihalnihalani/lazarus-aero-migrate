@@ -6,17 +6,20 @@
   <title>LAZARUS · Autonomous Legacy Modernization</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Major+Mono+Display&family=IBM+Plex+Mono:wght@400;500;600&family=Archivo:wght@500;700;800&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="./style.css" />
 </head>
 <body class="mode-live">
   <div class="bg" aria-hidden="true"></div>
 
   <header class="topbar">
-    <div class="brand"><span class="brand-mark">⚯</span><span class="brand-name">LAZARUS</span></div>
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">⚯</span>
+      <span class="brand-name">LAZARUS</span>
+    </div>
     <div class="topbar-meta">
       <span class="chip"><i>module</i><b id="meta-module">—</b></span>
-      <span class="chip soft"><i>model</i><b id="meta-agent">gemini-3.5-flash</b></span>
+      <span class="chip soft"><i>model</i><b id="meta-agent">antigravity-preview</b></span>
       <span class="chip soft"><i>iter</i><b><span id="iter-counter">0</span>/<span id="iter-cap">4</span></b></span>
       <span class="verdict-badge" id="verdict-badge"></span>
     </div>
@@ -31,7 +34,7 @@
           <b>byte-for-byte</b> against the real compiler.</p>
         <div class="dropzone" id="dropzone">
           <input type="file" id="file-input" accept=".cob,.cbl,.cpy,.txt" hidden />
-          <div class="drop-glyph">↧</div>
+          <div class="drop-glyph" aria-hidden="true">↧</div>
           <div class="drop-head">Drop a COBOL module to migrate</div>
           <button class="preload-btn" id="preload-btn" type="button">use the sample — payroll.cob</button>
           <div class="drop-name" id="drop-name"></div>
@@ -40,19 +43,31 @@
       </div>
     </section>
 
-    <!-- ── CONSOLE (one focus at a time) ────────────────────────── -->
+    <!-- ── CONSOLE (progressive reveal) ─────────────────────────── -->
     <section class="console">
       <nav class="phase-rail" id="phase-rail" aria-label="progress"></nav>
 
-      <!-- single-focus stage: only the ACTIVE step's card is shown -->
-      <div class="focus">
-        <article class="card" data-when="recover">
+      <!-- WORKING banner: current phase + spinner + latest agent action.
+           Visible while the run is in flight so it never looks frozen. -->
+      <div class="working" id="working" hidden>
+        <span class="spinner" aria-hidden="true"></span>
+        <div class="working-text">
+          <div class="working-phase" id="working-phase">working…</div>
+          <div class="working-action" id="working-action"></div>
+        </div>
+        <span class="working-iter" id="working-iter"></span>
+      </div>
+
+      <!-- progressive flow: cards reveal as they receive real data and
+           accumulate top-to-bottom; the active one is emphasized. -->
+      <div class="flow" id="flow">
+        <article class="card" data-when="recover" id="card-recover">
           <header class="card-head"><span class="card-title">Business rules recovered</span>
             <span class="card-note"><b id="rules-count">0</b> found</span></header>
           <div class="card-body"><div class="rules-list" id="rules-list"></div></div>
         </article>
 
-        <article class="card" data-when="translate">
+        <article class="card" data-when="translate" id="card-translate">
           <header class="card-head"><span class="card-title">COBOL → Python</span></header>
           <div class="card-body">
             <div class="diff-grid">
@@ -62,7 +77,7 @@
           </div>
         </article>
 
-        <article class="card panel" data-when="test">
+        <article class="card panel" data-when="test" id="card-test">
           <header class="card-head"><span class="card-title">Proof — equivalence vs. real COBOL</span>
             <span class="term-verdict" id="pytest-verdict"></span></header>
           <div class="card-body">
@@ -71,16 +86,16 @@
           </div>
         </article>
 
-        <article class="card panel" data-when="forge">
+        <article class="card panel" data-when="forge" id="card-forge">
           <header class="card-head"><span class="card-title">Forged a new skill</span>
             <span class="card-note" id="forge-reason"></span></header>
           <div class="card-body"><div class="forge-body" id="forge-body"></div></div>
         </article>
 
-        <!-- shown while waiting for the first artifact -->
-        <div class="focus-idle" id="focus-idle">
-          <span class="spinner"></span>
-          <span>Agent working in a live sandbox…</span>
+        <!-- shown only before the first card has any data -->
+        <div class="flow-idle" id="flow-idle">
+          <span class="spinner" aria-hidden="true"></span>
+          <span>Agent waking up in a live sandbox…</span>
         </div>
       </div>
 
