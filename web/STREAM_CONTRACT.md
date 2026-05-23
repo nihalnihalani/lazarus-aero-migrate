@@ -90,7 +90,7 @@ Sent once Python is written; may be re-sent after the forge with updated Python.
   "cases": [
     { "name": "test_net_pay[12000.00]", "status": "fail|pass",
       "cobol": "0009300.00", "python": "0009300.05",   // the oracle diff!
-      "message": "AssertionError: byte mismatch (COMP-3 rounding)" }
+      "message": "AssertionError: byte mismatch (COBOL ROUND-HALF-UP vs banker's)" }
   ] }
 ```
 
@@ -104,21 +104,22 @@ Shows that ground truth is REAL COBOL output, not agent-invented assertions.
 ```
 
 ### 7. `forge` — the self-authored SKILL.md / git-diff panel (f)
-The "$5k" beat: the agent writes itself a new skill and hot-reloads.
+The "$5k" beat: the agent writes itself a new skill, then re-reads it on the next
+pass within the same reused environment (no mid-run hot-reload — that's unverified).
 ```jsonc
 { "type": "forge", "t": 14000,
-  "skill": ".agents/skills/comp-3/SKILL.md",
-  "reason": "Unsupported idiom: COMP-3 packed-decimal rounding (ROUNDED).",
+  "skill": ".agents/skills/numeric-display-rounding/SKILL.md",
+  "reason": "Unknown idiom: COBOL numeric DISPLAY format + ROUND-HALF-UP.",
   "git": {
     "status": "A",                       // A=added, M=modified
     "additions": [ "line of new file", "..." ],   // rendered green, typed in
-    "commit": "forge: add comp-3 packed-decimal skill"
+    "commit": "forge: add numeric DISPLAY + half-up rounding skill"
   } }
 ```
 
-### 8. `reload` — agent hot-reloads with the new skill
+### 8. `reload` — agent re-reads the new skill on the next pass (same env)
 ```jsonc
-{ "type": "reload", "t": 17000, "label": "Hot-reloading agent with comp-3 skill" }
+{ "type": "reload", "t": 17000, "label": "Re-reading numeric-display-rounding skill in the reused environment" }
 ```
 
 ### 9. `download` — enables the Download button with a ready artifact (g)

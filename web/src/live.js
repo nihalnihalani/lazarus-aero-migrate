@@ -1,107 +1,141 @@
-// live.js — real end-to-end SSE client. Bridges the FastAPI backend
-// (src/server.py) to a LivePlayer: POST the COBOL, subscribe to the
-// text/event-stream, push canonical Events into the renderer as they arrive.
+// live.js — REAL end-to-end SSE client. The ONLY data source for the UI; there
+// is no scripted/mock path. Bridges the FastAPI backend (src/server.py) to a
+// LivePlayer: subscribe to the agent's event-stream, push canonical Events into
+// the renderer as they arrive, surface real errors (never fake data).
 //
-// Handles BOTH backend contract options (configurable, default 'canonical'):
-//   • 'canonical' — server already emits canonical Event JSON per SSE line.
-//                   The UI does zero transform. (recommended; least UI risk)
-//   • 'raw'       — server forwards raw Gemini step.* events; we adapt in the
-//                   browser via StreamAdapter (handles the start/delta/stop
-//                   lifecycle + the 7 derived events still come pre-canonical).
+// Backend emits CANONICAL Event JSON per SSE line (web/STREAM_CONTRACT.md):
+// phase | step | business_rule | diff | oracle | pytest | forge | reload |
+// download | done | error. The UI does zero transform.
 //
-// Endpoint contract (proposed to backend-eng; reconcile in ENDPOINTS below):
-//   POST {base}/api/migrate   { cobol, filename } -> { run_id }
-//   GET  {base}/api/stream/{run_id}               -> text/event-stream
-//   GET  {base}/api/download/{run_id}             -> migrated module bytes
+// CONTRACT AUTO-DETECTION — the backend is mid-reconcile between two shapes, so
+// this client supports BOTH and picks whichever the running server offers:
+//   (A) GET-direct:  GET {base}/api/migrate?module=<name>   -> text/event-stream
+//                    (current src/server.py)
+//   (B) POST+run_id: POST {base}/api/migrate {cobol,filename} -> { run_id }
+//                    then GET {base}/api/stream/{run_id}      -> text/event-stream
+//                    (shape in tests/test_server.py)
+// It tries (B) first (POST); if the server doesn't speak it, falls back to (A).
+//
+// Download: canonical mode delivers the migrated module INLINE in the `download`
+// event ({name,mime,content}); contract (B) may instead expose
+// GET /api/download/{run_id}. The renderer handles both (url or content).
 
 import { LivePlayer } from './player.js';
-import { StreamAdapter } from './adapter.js';
 
 export const ENDPOINTS = {
-  base: '',                                   // same-origin by default
+  base: '',                                            // same-origin (server serves web/ at /)
+  health: (b) => `${b}/api/health`,
   migrate: (b) => `${b}/api/migrate`,
+  migrateGet: (b, module) => `${b}/api/migrate?module=${encodeURIComponent(module)}`,
   stream: (b, id) => `${b}/api/stream/${id}`,
   download: (b, id) => `${b}/api/download/${id}`,
 };
 
-/**
- * Create a LivePlayer for a run. Caller MUST attach the renderer to it AND
- * reset the renderer before calling driveLiveRun(), so the very first pushed
- * event (incl. a backend-unreachable error) renders into the trace.
- * @param {object} meta
- * @returns {LivePlayer}
- */
+/** Create a LivePlayer. Caller MUST attach the renderer + reset BEFORE driving,
+ *  so the first pushed event (including a fatal error) renders. */
 export function createLivePlayer(meta = {}) {
   return new LivePlayer(meta);
 }
 
+/** Probe the backend; returns { ok, keyPresent, info } or { ok:false }. */
+export async function checkHealth(base = ENDPOINTS.base) {
+  try {
+    const res = await fetch(ENDPOINTS.health(base), { cache: 'no-store' });
+    if (!res.ok) return { ok: false };
+    const info = await res.json();
+    return { ok: true, keyPresent: !!info.gemini_api_key_present, info };
+  } catch {
+    return { ok: false };
+  }
+}
+
+const errStep = (title, text) => ({
+  type: 'step', kind: 'status', status: 'error', title, text,
+});
+
 /**
- * Drive a live migration on an ALREADY-ATTACHED player.
- * @param {LivePlayer} player - from createLivePlayer(), renderer already attached
- * @param {string} cobol   - the COBOL source to migrate
- * @param {string} filename
- * @param {object} opts    - { base, mode:'canonical'|'raw' }
- * @returns {Promise<{ runId, abort, downloadUrl }>}
+ * Drive the real migration on an already-attached player. Pushes canonical
+ * Events as they stream; pushes an error step on any failure (no fake data).
+ * @param {LivePlayer} player
+ * @param {string} cobol      - source text (used by contract B)
+ * @param {string} filename   - e.g. "payroll.cob" (module name for contract A)
+ * @param {object} opts       - { base }
+ * @returns {Promise<{ runId, abort }>}
  */
 export async function driveLiveRun(player, cobol, filename, opts = {}) {
   const base = opts.base ?? ENDPOINTS.base;
-  const mode = opts.mode ?? 'canonical';
+  const moduleName = filename || 'payroll.cob';
 
-  // 1. Kick off the migration; get a run_id to subscribe to.
-  let runId;
+  // --- Try contract (B): POST -> run_id ------------------------------------
+  let runId = null;
+  let postSupported = true;
   try {
     const res = await fetch(ENDPOINTS.migrate(base), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cobol, filename }),
+      body: JSON.stringify({ cobol, filename: moduleName }),
     });
-    if (!res.ok) throw new Error(`migrate ${res.status}`);
-    const data = await res.json().catch(() => ({}));
-    runId = data.run_id || data.runId || data.id;
+    if (res.status === 405 || res.status === 501) {
+      postSupported = false;                       // server is GET-direct only
+    } else if (res.status === 503) {
+      const body = await res.json().catch(() => ({}));
+      player.push(errStep('no API key',
+        `${body.error || 'GEMINI_API_KEY not set'}. ${body.hint || 'Provision the key, then re-run.'}`));
+      return { runId: null, abort: () => {} };
+    } else if (!res.ok) {
+      // POST exists but errored for another reason — report it, don't fall back blindly.
+      const body = await res.text().catch(() => '');
+      player.push(errStep(`backend error ${res.status}`, body.slice(0, 300) || 'POST /api/migrate failed.'));
+      return { runId: null, abort: () => {} };
+    } else {
+      const data = await res.json().catch(() => ({}));
+      runId = data.run_id || data.runId || data.id || null;
+      if (!runId) postSupported = false;           // 200 but no run_id -> treat as GET-direct
+    }
   } catch (err) {
-    player.push({ type: 'step', kind: 'status', status: 'error',
-                  title: 'backend unreachable',
-                  text: `Could not start live run: ${err.message}. ` +
-                        `Is src/server.py running? Fallback: append ?mock=1.` });
-    return { runId: null, abort: () => {}, downloadUrl: null };
+    // Network failure → backend likely down. One health probe to give a precise message.
+    const h = await checkHealth(base);
+    if (!h.ok) {
+      player.push(errStep('backend unreachable',
+        `Cannot reach the LAZARUS server at ${base || location.origin}. ` +
+        `Start it:  uvicorn server:app --app-dir src  (then reload).`));
+      return { runId: null, abort: () => {} };
+    }
+    postSupported = false;                          // server up but POST failed → try GET-direct
   }
 
-  // 2. Subscribe to the SSE stream.
-  const adapter = mode === 'raw' ? new StreamAdapter() : null;
-  const es = new EventSource(ENDPOINTS.stream(base, runId));
+  // --- Subscribe to the SSE stream -----------------------------------------
+  const streamUrl = (postSupported && runId)
+    ? ENDPOINTS.stream(base, runId)                 // contract B
+    : ENDPOINTS.migrateGet(base, moduleName);       // contract A (GET-direct)
 
-  const handle = (raw) => {
+  const es = new EventSource(streamUrl);
+  let done = false;
+
+  es.onmessage = (e) => {
     let payload;
-    try { payload = JSON.parse(raw); } catch { return; }
-    if (mode === 'raw') {
-      // Raw mode: events tagged event_type are Gemini steps → adapt;
-      // anything already in canonical shape (the 7 derived events) passes through.
-      if (payload.event_type) {
-        for (const ev of adapter.ingest(payload)) player.push(ev);
-      } else if (payload.type) {
-        player.push(payload);
-      }
-    } else {
-      // Canonical mode: push as-is.
-      if (payload.type) player.push(payload);
+    try { payload = JSON.parse(e.data); } catch { return; }
+    if (!payload || !payload.type) return;
+    if (payload.type === 'error') {
+      player.push(errStep('agent error', payload.message || payload.error || 'stream error'));
+      done = true; es.close(); return;
     }
-    if (payload.type === 'done' || payload.event_type === 'interaction.completed') {
-      es.close();
+    // Live download via contract B: rewrite to a real URL if no inline content.
+    if (payload.type === 'download' && payload.content == null && runId) {
+      player.push({ type: 'download', name: payload.name || moduleName.replace(/\.cob$/, '.py'),
+                    url: ENDPOINTS.download(base, runId) });
+      return;
     }
+    player.push(payload);
+    if (payload.type === 'done') { done = true; es.close(); }
   };
 
-  es.onmessage = (e) => handle(e.data);
   es.onerror = () => {
-    // EventSource auto-reconnects; surface a soft warning, don't spam.
-    if (es.readyState === EventSource.CLOSED) {
-      player.push({ type: 'step', kind: 'status', status: 'error',
-                    title: 'stream closed', text: 'SSE connection closed.' });
+    if (es.readyState === EventSource.CLOSED && !done) {
+      player.push(errStep('stream closed',
+        'The event stream closed before completion. Check the server logs.'));
     }
   };
 
-  return {
-    runId,
-    abort: () => es.close(),
-    downloadUrl: ENDPOINTS.download(base, runId),
-  };
+  return { runId, abort: () => es.close() };
 }

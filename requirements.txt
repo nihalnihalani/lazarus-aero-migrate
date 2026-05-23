@@ -5,10 +5,12 @@
 # on 2026-05-23 (Python 3.12+ / 3.14).
 
 # --- Managed Agents driver (src/agent.py) ---
-# Managed Agents path requires google-genai >= 2.0.0 (per the official cookbook; the
-# 1.55.0 in the interactions docs is the MODEL-interactions path, not the managed-agents
-# path). We pin >= 2.6.0 (latest verified-good) with a <3.0.0 ceiling so a beta breaking
-# change can't silently upgrade us mid-event. Verified in docs/RESEARCH_MANAGED_AGENTS.md §5.
+# Verified floor is google-genai >= 2.4.0 (CHANGELOG, via findings-agents.md): step.* SSE
+# events ship in 2.0.0, interaction.output_text in 2.3.0, and client.agents (create/get/
+# list/delete) + the Environment API in 2.4.0 — below 2.4.0 client.agents does not exist.
+# (The 1.55.0 in the interactions docs is the MODEL path, not managed-agents.) We pin the
+# latest verified-good 2.6.0 as the floor with a <3.0.0 ceiling so a beta breaking change
+# can't silently upgrade us mid-event.
 # Gemini 3.x note: agent.py sends NO temperature/top_p/top_k (rejected on 3.x); the only
 # generation knob is thinking_level (default "medium"), which we leave at default.
 google-genai>=2.6.0,<3.0.0
