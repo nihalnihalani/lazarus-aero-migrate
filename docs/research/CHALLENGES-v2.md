@@ -980,3 +980,30 @@ agent tools per §3).
   set; the demo UI drives single-file") and DON'T show it as a clicked-in-the-UI feature. Either is fine;
   silently demoing it as a product feature is not. Flagged to team-lead. This does NOT affect the
   regression gate (single-file path is byte-identical) and #4's code stays VERIFIED-as-a-function.
+
+## L24 — CORRECTION to my own L22: the current thinking shape is NOVEL vs the live-proven set → thinking is RE-OPENED (genuinely open, must re-test the EXACT current shape)
+
+- **Self-catch (the discipline I hold others to applies to me).** In L22 I leaned on memory
+  [[thinking-level-rejected-live]] to call thinking a "verified graceful no-op." But that memory tested
+  `agent_config={"thinking_config":{...}}` and `agent_config={"generation_config":{...}}` (NESTED
+  sub-configs) → all 400. The CURRENT code (de85409) sends a DIFFERENT, more-correct shape:
+  `agent_config={"type":"dynamic","thinking_level": level}` — a FLAT thinking_level on a
+  `DynamicAgentConfigParam`. That exact shape is NOT in the memory's tested set.
+- **SDK structural check (I verified):** `BaseCreateAgentInteractionParams` has `agent: Required` AND
+  `agent_config: AgentConfig` (= Union[DynamicAgentConfigParam, DeepResearchAgentConfigParam]) as
+  SIBLINGS — so `agent_config` is a valid co-param with a registered `agent=` (not a client-side
+  ValueError like the typed-kwarg path). `DynamicAgentConfigParam` is `total=False, extra_items=object`,
+  so `thinking_level` rides as an extra item. CONSEQUENCE: the SDK will SEND this call (no local reject);
+  whether the managed-agent BACKEND honors it, ignores it, or 400s is GENUINELY UNKNOWN and was NOT
+  proven by the prior session. (Open sub-question: does sending a `dynamic` agent_config alongside a
+  REGISTERED custom agent "lazarus" conflict server-side?)
+- **Verdict: thinking_level RE-OPENED — HOLD, genuinely open (not "verified no-op").** qa must re-test
+  with the EXACT current shape on the real key and report ONE of:
+  * ACCEPTED: `usage.total_thought_tokens` CHANGES minimal vs high (+ ideally `thought` blocks on the
+    STREAM, since get() flattens them) → Feature 2 is VERIFIED WORKING (a real upgrade).
+  * REJECTED (HTTP 400 / silently ignored — tokens identical minimal vs high) → confirmed graceful no-op,
+    and `_looks_like_thinking_rejection` must catch the actual error (it currently keys on
+    "agent_config"/"unknown field"/"invalid argument" — confirm the real 400 message matches, else the
+    flag would crash the run instead of no-op'ing). Either outcome is shippable IF the docs match it; what
+    I will NOT accept is asserting a verdict from the OLD memory's different-shape result. My L22 "verified
+    no-op" is WITHDRAWN pending this re-test.
