@@ -303,9 +303,15 @@ export class Renderer {
   // --- (g) download --------------------------------------------------------
   on_download(ev) {
     const r = this.refs;
-    this.artifact = ev;
+    this.artifact = ev;   // may carry inline {content} (mock) or {url} (live)
     r.downloadBtn.removeAttribute('disabled');
     r.downloadBtn.classList.add('ready');
+  }
+
+  /** Live mode: point the download button at a real backend URL. */
+  setDownloadUrl(url, name) {
+    if (!url) return;
+    this.artifact = { url, name: name || 'payroll.py' };
   }
 
   on_done(ev) {
@@ -320,17 +326,26 @@ export class Renderer {
     }
   }
 
-  /** Trigger a browser download of the migrated artifact. */
+  /** Trigger a browser download of the migrated artifact.
+   *  Live: a real backend URL (pulled from the persistent sandbox).
+   *  Fallback: an inline blob from the event content. */
   triggerDownload() {
     if (!this.artifact) return;
-    const blob = new Blob([this.artifact.content], { type: this.artifact.mime || 'text/plain' });
-    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url;
+    let revoke = null;
+    if (this.artifact.url) {
+      a.href = this.artifact.url;          // real file from the backend
+    } else if (this.artifact.content != null) {
+      const blob = new Blob([this.artifact.content], { type: this.artifact.mime || 'text/plain' });
+      a.href = URL.createObjectURL(blob);
+      revoke = a.href;
+    } else {
+      return;
+    }
     a.download = this.artifact.name || 'payroll.py';
     document.body.appendChild(a);
     a.click();
     a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    if (revoke) setTimeout(() => URL.revokeObjectURL(revoke), 1000);
   }
 }

@@ -8,9 +8,14 @@ persistent Linux sandbox. You have `code_execution` and a persistent filesystem.
 1. **Recover before you translate.** Read the entire COBOL module and write a plain-English
    spec of the business rules it encodes (rounding, tax edge-cases, data layouts). Print it.
 2. **Translate** to idiomatic, well-structured Python.
-3. **Never grade your own homework.** Build a differential oracle: compile and run the
-   ORIGINAL COBOL with GnuCOBOL (`cobc -x`) over the input battery, capture canonical
-   outputs, and write equivalence tests asserting `python == cobol` byte-for-byte.
+3. **Never grade your own homework.** Build a differential oracle whose ground truth is
+   the ORIGINAL COBOL's REAL output. The PRIMARY source is `src/sample/golden_io.json`
+   (real GnuCOBOL outputs captured ahead of time) — do NOT try to install a COBOL
+   compiler; this sandbox has no root/package manager and the diff must not depend on a
+   live compile. If `cobc`
+   or a mounted COBOL binary happens to be present, re-run the battery through it to
+   confirm the golden capture is fresh, but assert `python == golden_cobol` byte-for-byte
+   either way.
 4. **Iterate to green**, capped at 4 iterations. Read tracebacks; patch precisely.
 5. **Forge skills — then re-read before retrying.** When a failure is caused by an
    unknown COBOL idiom (e.g. `COMP-3`, `REDEFINES`, `OCCURS DEPENDING ON`):
@@ -23,8 +28,13 @@ persistent Linux sandbox. You have `code_execution` and a persistent filesystem.
       e.g. `cat .agents/skills/<idiom>/SKILL.md` and re-scan `.agents/skills/` for any
       other skills you have authored.
    c. Apply the technique from the skill, then re-run the differential oracle + pytest.
-   The driver reuses the SAME environment across this forge -> retry turn (so the file
-   is present) and prompts you to perform step (b). Forged skills persist for future runs.
+   The driver reuses the SAME environment_id across this forge -> retry turn, so the
+   forged file is present and you re-read it (step b). Persistence scope: the skill lives
+   in THIS environment and survives as long as you keep reusing its environment_id. A
+   brand-new agent invocation forks a fresh copy of the base environment and starts
+   clean — to carry a forged skill into FUTURE runs permanently, the agent must be
+   re-registered with that SKILL.md mounted in base_environment. Do not assume forged
+   skills are eternal or auto-loaded.
 
 ## Hard constraints
 - Single agent. Do NOT attempt sub-agent orchestration, MCP, computer use, or function

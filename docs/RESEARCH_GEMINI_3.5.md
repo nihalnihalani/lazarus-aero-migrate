@@ -57,12 +57,13 @@ context window large enough to ingest a full legacy COBOL module in one request.
   Source: <https://ai.google.dev/gemini-api/docs/interactions/whats-new-gemini-3.5>
 
 > ✅ **C2 — model side:** Computer Use is **not** available on `gemini-3.5-flash`;
-> **File Search and structured outputs ARE** supported at the model level.
+> File Search, function calling, and structured outputs ARE supported *by the model*.
 >
-> ⚠️ **BUT the managed Antigravity agent (what LAZARUS actually runs) does NOT expose
-> `file_search`, `computer_use`, `function_calling`, `mcp`, or structured outputs**,
-> and is text+image only — even though the underlying model supports some of these.
-> So at the project level the ARCHITECTURE/README "not used / unsupported" framing is
+> ⚠️ **The runtime LAZARUS uses (the Antigravity managed agent) does NOT expose
+> `file_search`, `computer_use`, `function_calling`, `mcp`, or structured outputs** —
+> these are **managed-agent limitations, not model ones.** The Antigravity runtime
+> supports only `code_execution` + `google_search` + `url_context` + filesystem, and
+> is text+image only. So the ARCHITECTURE/README "not used / unsupported" framing is
 > ACCURATE. Build to the **agent** capability matrix, not this model list. See
 > `RESEARCH_MANAGED_AGENTS.md §3` (verdict: C2/C4 resolved).
 

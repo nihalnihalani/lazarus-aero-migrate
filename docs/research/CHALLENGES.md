@@ -17,18 +17,18 @@ investor are in the room and will fact-check every number and every platform cla
 | C1b | Forged skills "persist forever / accumulate across runs" | load-bearing (moat) | **NEEDS FIX** — fresh invocations fork clean |
 | C2 | "computer_use / file_search NOT used (unsupported)" honesty claim | load-bearing (honesty) | **CONFIRMED** — both genuinely unsupported; seed premise was wrong |
 | C3 | Base agent ID `antigravity-preview-05-2026` | load-bearing (it runs) | **CONFIRMED** — exact + only supported value |
-| C4 | Agent compiles + runs real COBOL via GnuCOBOL live | load-bearing (#1 anti-objection) | **NEEDS FIX** (downgraded from FALSE — product mix-up corrected; Gemini API has network ON by default; "pre-installed" is still false; apt/root pending). Falsifiability INTACT via golden_io.json / mounted binary. |
+| C4 | Agent compiles + runs real COBOL via GnuCOBOL live | load-bearing (#1 anti-objection) | **NEEDS FIX** (was FALSE; corrected). Only the "apt-get / pre-install into base_environment" WORDING is wrong. **Live-compile is VIABLE** (task #8): the AGENT micromamba/conda-forge-installs `gnucobol` (ships its OWN compiler+libcob+gmp, no system gcc, no root) at pre-warm into the reused env_id → no network needed live. golden_io.json = floor. Mounted-binary path REJECTED ("Binary file support is not yet available"). Falsifiability INTACT. |
 | C5 | "byte-for-byte" diff is robust | load-bearing (demo) | **NEEDS FIX (TESTED)** — zero-pad format + half-up rounding fail naively; proven fix = Decimal/HALF_UP + `{:07d}.{:02d}` (9/9 byte-exact) |
-| C6 | Sandbox spec (Python 3.12 / Node 22 / 4CPU·16GB / 15-min snapshot) | medium | **MOSTLY RETRACTED** — I cited wrong product; on the Gemini API, 3.12/Node22/15-min-snapshot are CORRECT. Only "4CPU/16GB" still unsourced. |
+| C6 | Sandbox spec (Python 3.12 / Node 22 / 4CPU·16GB / 15-min snapshot) | medium | **CONFIRMED (repo correct)** — lead fetched agent-environment.md.txt: "4 cores" + "16 GB" are VERBATIM-sourced; all repo specs (3.12 / Node 22 / 4 CPU / 16 GB / 15-min snapshot / 7-day retention / unrestricted network) VERIFIED. Hackathon hands out Gemini API keys → ai.google.dev governs. Do NOT edit. |
 | C7 | NJ impact stats (1600%, 575k, "begged on live TV") | medium (Impact = 20%) | **MIXED** — 1600% CONFIRMED; 575k UNVERIFIED; "live TV" embellished |
 | C8 | $2.41T tech debt; 18–23% wasted; $30B market | medium (Impact = 20%) | **CONFIRMED** (with date caveats) |
 | C9 | "1M-token context" relevance to a ~150-line module | low (framing) | **NEEDS FIX** — non-sequitur a judge will needle |
 | C10 | `MAX_ITERATIONS = 4` "hard cap" + "visible counter" | medium (demo safety) | **NEEDS FIX** — not enforced in code; only prompt text |
 | C11 | agent.py streaming/SDK field names | medium (it runs) | **NEEDS FIX** — guessed schema; verify or it crashes |
 | C12 | Demo determinism / cold-start | medium (Demo = 45%) | **ACCEPTED RISK** — mitigations exist; tighten |
-| C13 | Demo blames "COMP-3" but COMP-3 isn't what fails | medium (signature beat honesty) | **NEEDS FIX (PROVEN)** — COMP-3 and USAGE-DISPLAY give byte-identical output; re-label the forged idiom |
+| C13 | Demo blames "COMP-3" but COMP-3 isn't what fails | medium (signature beat honesty) | **NEEDS FIX (PROVEN) — NOT YET LANDED** — relabel still missing from mock-run.json (drives UI), STREAM_CONTRACT, DEMO, README, ARCHITECTURE, AGENTS.md, test_agent.py. Highest-priority remaining honesty fix. |
 | C14 | BUILD_PLAN "install GnuCOBOL" + "no network" contradiction | medium (build day) | **NEEDS FIX** — impossible task + self-contradiction; resolve with C4 |
-| C15 | `google-genai>=1.55.0` minimum version | low (it installs) | **VERIFY** — unconfirmed from primary source |
+| C15 | `google-genai>=1.55.0` minimum version | low (it installs) | **RESOLVED (catch was right)** — true floor is `>=2.0.0` (1.55.0 was the model-interactions path). Repo already bumped to `>=2.6.0,<3.0.0`. |
 
 ---
 
@@ -105,35 +105,42 @@ investor are in the room and will fact-check every number and every platform cla
   - **Network is ON by default:** *"By default, environments have unrestricted outbound
     network access."* (Opposite of what I first reported.) So a network-gated apt is NOT the
     blocker on this product.
-  - Runtime install is still documented only as `pip install` / `npm install`.
-  - **apt / sudo / root: NOT MENTIONED** on any ai.google.dev page (antigravity-agent,
-    quickstart, agent-environment). Neither confirmed nor denied. (Asked researcher-agents to
-    grep the .md.txt docs for apt/sudo/root — pending.)
-  - Preinstalled list: Python 3.12, Node 22, Unix tools (curl/git/jq/gcloud/ripgrep/…),
-    google-genai, numpy, pandas. **`cobc` is NOT in it.**
+  - Runtime install is documented only as `pip install` / `npm install`.
+  - **apt / sudo / root: absent** (task #8). So `apt-get install gnucobol` can't run — BUT a
+    USERLAND install works: `micromamba`/`conda install -c conda-forge gnucobol` at pre-warm
+    (no root, network on, persists in the env). Live compile is recoverable this way. (Mounting
+    a precompiled binary is NOT an option — "Binary file support is not yet available.")
+  - Preinstalled list: Python 3.12, Node 22, **4 cores / 16 GB**, `git` preinstalled, Unix
+    tools (curl/jq/gcloud/ripgrep/…), google-genai, numpy, pandas. **`cobc` is NOT in it.**
   - https://ai.google.dev/gemini-api/docs/agent-environment
   - https://ai.google.dev/gemini-api/docs/antigravity-agent
-- **Verdict: NEEDS FIX (downgraded from FALSE), pending the apt/root confirmation.** The
-  claim "GnuCOBOL is **pre-installed/pre-warmed in base_environment**" is still FALSE — it
-  isn't preinstalled and there's no base-image customization. But "the agent installs +
-  runs GnuCOBOL **live**" is now PLAUSIBLE *if* apt+root work (network is on). Three paths,
-  in order of confidence:
-  - **A (safe baseline, recommended, DE-RISKED TODAY):** `golden_io.json` captured from REAL
-    GnuCOBOL pre-event. Falsifiable (it's the real compiler's output, just pre-captured),
-    network-free, deterministic. I already generated a real one (see C5). Lock this as the
-    floor.
-  - **B (mount a prebuilt binary):** ship a statically linked `cobc`+`libcob` and execute it
-    live (no apt, no root). The "real COBOL runs on stage" claim survives. Needs end-to-end
-    verification (task #8) — execute-bit, glibc/musl, runtime libs.
-  - **C (live apt):** IF researcher-agents confirms apt+root exist on the Gemini API sandbox
-    (network is already on), `apt-get install -y gnucobol` could work live — the strongest
-    demo beat. Do NOT rely on it until confirmed AND smoke-tested the morning of; treat as
-    upside over A.
-  - **Honesty bottom line:** the FALSIFIABILITY of the oracle is INTACT under all three —
-    it's the real compiler's output either way. Only "**live** compile on stage" is at risk,
-    and that risk is now smaller than I first stated (network-on changes the picture). The
-    docs as written overclaim "pre-installed" (fix that word) but the core anti-objection
-    survives. Claim-as-written = NEEDS FIX; core falsifiability = INTACT via A/B(/C).
+- **Verdict: NEEDS FIX (was FALSE; corrected after product fix + lead source-check).** The
+  ONLY genuinely-wrong thing is the **mechanism**: "`apt-get install gnucobol` / GnuCOBOL
+  **pre-installed/pre-warmed in base_environment**." cobc is NOT in the preinstalled list,
+  there's no base-image customization, and apt/root are undocumented (absent). Fix that
+  wording. The "**run real COBOL live**" BEAT is RECOVERABLE and the falsifiability is INTACT.
+  Paths:
+  - **LIVE-COMPILE IS VIABLE — THE AGENT INSTALLS GnuCOBOL ITSELF (lead + task #8 verified;
+    FINAL mechanism):** at PRE-WARM the agent installs GnuCOBOL into the sandbox via a
+    **userland package manager** — `micromamba` / `conda install -c conda-forge gnucobol` into
+    the long-lived environment. KEY FACT: the conda-forge `gnucobol` package pulls its OWN
+    compiler + `libcob` + `gmp`, so it works with NO system `gcc` and NO root. Network is ON by
+    default; the install persists in the `environment_id`, which is REUSED on stage → NO network
+    needed during the live run. The agent then compiles + runs the REAL COBOL live. Full "live
+    compile" beat recovered without apt/root. (researcher-gemini has a bundle-`libcob` backup recipe.)
+  - **FALLBACK FLOOR (DE-RISKED TODAY):** `golden_io.json` captured from REAL GnuCOBOL
+    pre-event (I cross-verified backend-eng's, 10/10 byte-exact — see C5). Falsifiable,
+    deterministic, network-free. Keep as the cached fallback.
+  - **REJECTED — mounted precompiled binary:** ai.google.dev states verbatim *"Binary file
+    support is not yet available"* (sources are inline-text / git / gcs only, and a committed
+    binary in a repo source is not reliably executable). Do NOT use this path. (My earlier
+    "mount a static cobc binary" suggestion is SUPERSEDED.)
+  - **REJECTED — live apt:** apt needs root; root is absent. Use the userland conda install.
+  - **Honesty bottom line:** falsifiability is INTACT — it's the real compiler's output whether
+    live (conda-installed cobc) or pre-captured (golden_io.json). The docs only need the
+    **mechanism** corrected: drop "apt-get / pre-install into base_environment"; say "the agent
+    micromamba/conda-forge-installs GnuCOBOL at pre-warm into the reused environment, then
+    compiles + runs the real COBOL live." The #1 anti-objection ("we run the real program") survives fully.
 
 ### C5. Is the "byte-for-byte" diff robust, or does it fail for formatting reasons?  — NEEDS FIX
 > **EMPIRICALLY TESTED** — I compiled `src/sample/payroll.cob` with the real GnuCOBOL 3.2.0
@@ -183,32 +190,43 @@ investor are in the room and will fact-check every number and every platform cla
   5. The RED→GREEN beat should be the rounding-mode + zero-pad-format fix (the real idiom,
      see C13), NOT "COMP-3". Rehearse that the forged SKILL.md content produces exactly this.
   (Sent backend-eng the proven pattern + battery guidance.)
+- **INDEPENDENT VERIFICATION (2026-05-23, devils-advocate) — C5 oracle RESOLVED.**
+  backend-eng committed `src/sample/golden_io.json` (10 cases) + `payroll.py`. I compiled the
+  committed `payroll.cob` with MY OWN GnuCOBOL 3.2.0 and cross-checked:
+  - All **10/10** committed `golden_io.json` `cobol` byte-strings MATCH my independent
+    captures byte-for-byte (incl. ties 1.00→`0000000.77`, 5.00→`0000003.87`, and
+    9999999.99→`7749999.99`). Ground truth is genuinely REAL, not computed.
+  - `payroll.py` is **byte-equivalent to the real COBOL 10/10** (`Decimal`+`ROUND_HALF_UP` +
+    `{:07d}.{frac:02d}`, exactly as recommended).
+  - The UI mock failing-case (`99999.99` → COBOL `0077499.99`, naive Python `0077500.00`) is a
+    REAL divergence, verified against the binary.
+  - The byte-exact comparison is correct and independently confirmed.
 
 ---
 
 ## New challenges (found while attacking)
 
-### C6. Sandbox spec drift  — ~~NEEDS FIX~~ → MOSTLY RETRACTED (I cited the wrong product)
-> **SELF-CORRECTION.** My original C6 evidence came from `docs.cloud.google.com`
-> (**Gemini Enterprise Agent Platform** — an enterprise product). The hackathon uses the
-> **Gemini API** at `ai.google.dev`, which is a DIFFERENT product with DIFFERENT specs. The
-> lead caught this. Re-verified against the correct product:
-- **Claim:** ARCHITECTURE §4: "Python 3.12, Node 22"; "4 CPU / 16 GB (free during
-  preview)"; "Sandboxes auto-snapshot after 15 min idle and are retained 7 days."
-- **Evidence (CORRECT product — ai.google.dev Gemini API):**
-  - Python **3.12** + Node.js **22** — **our docs are CORRECT.** (The 3.11/Node20 I cited is
-    the *Enterprise Agent Platform*, not this product.)
-  - Lifecycle: Idle → "**Auto-snapshot and stopped after 15 minutes of inactivity**";
-    Offline → "**Retained for 7 days** since last active." **Our docs are CORRECT** — the
-    "15-min idle snapshot, 7-day retention" line I called "invented" is verbatim accurate.
+### C6. Sandbox spec drift  — ~~NEEDS FIX~~ → **CONFIRMED (repo is CORRECT)**
+> **RESOLVED — the repo's numbers are right; my original critique was wrong-product.** The
+> lead verified at the source (`ai.google.dev/gemini-api/docs/agent-environment.md.txt`).
+> My first-pass evidence came from `docs.cloud.google.com` (**Gemini Enterprise Agent
+> Platform** — a DIFFERENT product). The hackathon uses the **Gemini API** Antigravity agent.
+- **Claim:** ARCHITECTURE §4: "Python 3.12, Node 22"; "4 CPU / 16 GB"; "Sandboxes
+  auto-snapshot after 15 min idle and are retained 7 days."
+- **Evidence (CORRECT product — ai.google.dev Gemini API, lead-verified verbatim):**
+  - Python **3.12**, Node.js **22**, **4 cores, 16 GB** — **MATCHES the repo. All correct.**
+  - Lifecycle: Idle "Auto-snapshot after 15 min"; Offline "Retained 7 days since last
+    active." **MATCHES the repo.**
+  - Network is ON by default ("unrestricted outbound network access"); `git` is preinstalled;
+    repository sources can mount arbitrary files; `pip`/`npm` install available at runtime.
   - https://ai.google.dev/gemini-api/docs/agent-environment
-- **Verdict: RETRACTED on Python/Node/lifecycle** (those were right; my error). **Only
-  remaining nit:** "4 CPU / 16 GB (free during preview)" — still not found in the
-  ai.google.dev docs either. Keep ONLY if researcher-agents has a primary source; otherwise
-  soften to "generous preview limits" or drop. (Escalation correction sent to lead.)
-- **LESSON:** every sandbox/network/spec claim must be sourced to `ai.google.dev`
-  (Gemini API), NOT `docs.cloud.google.com` (Enterprise Agent Platform). Re-audited C4 on
-  this basis below.
+- **Verdict: CONFIRMED.** Do NOT change the env-spec numbers — the 3.11/Node20/7-day-TTL
+  edits I floated earlier would INTRODUCE errors. Optional one-liner: add a note that the
+  conflicting `docs.cloud.google.com` numbers belong to a different product, so a judge who
+  Googles them isn't confused.
+- **LESSON (recorded in memory):** source every sandbox/network/spec fact to `ai.google.dev`
+  (Gemini API), NOT `docs.cloud.google.com` (Enterprise Agent Platform). The docs are
+  genuinely confusing — same-sounding products, different specs.
 
 ### C7. New Jersey impact stats  — MIXED (one number unverified)
 - **Claim:** README §1 "1,600% surge" + "575,000+ filings backlogged in weeks" + governor
@@ -317,18 +335,28 @@ investor are in the room and will fact-check every number and every platform cla
   - https://www.mainframestechhelp.com/tutorials/cobol/comp-3.htm
   - https://gnucobol.sourceforge.io/HTML/gnucobpg.html
   - http://www.simotime.com/datapk01.htm
-- **Verdict: NEEDS FIX (narrative honesty).** Two honest options:
-  1. **Re-label the forged skill** to the TRUE idiom it fixes — e.g. a "COBOL numeric
-     output formatting + ROUND-HALF-UP equivalence" skill (de-edit the DISPLAY, match the
-     rounding mode). This is the real institutional-knowledge gap and is genuinely
-     non-obvious — a stronger, more defensible story than "COMP-3."
-  2. If you keep COMP-3 as the headline idiom, make the COBOL actually exercise something
-     COMP-3-specific that DOES change behavior (e.g. a `REDEFINES` over the packed bytes, or
-     `OCCURS DEPENDING ON` with packed elements) so the failure is genuinely attributable to
-     packed-decimal handling. Harder to build in time.
-  - Recommendation: option 1. The forge beat survives intact; only the LABEL of the idiom
-    changes to one that's actually true. (Coordinate with backend-eng on payroll.cob +
-    the seed/forged SKILL.md content.)
+- **Verdict: NEEDS FIX (narrative honesty) — NOT YET LANDED as of 2026-05-23.** Recommended
+  fix (lead-confirmed): re-label the forged skill to the TRUE idiom — "COBOL numeric DISPLAY
+  format (zero-pad/de-edit) + ROUND-HALF-UP equivalence." The forge beat survives intact; only
+  the idiom LABEL changes to one that's actually true. **STATUS: the relabel has NOT been
+  applied — "COMP-3 is what fails" still pervades the demo-facing files.** Exact occurrences a
+  COBOL-literate judge would catch (audited 2026-05-23):
+  - `web/mock/mock-run.json` (DRIVES the on-stage UI): line 22 business_rule "COMP-3 half-up
+    rounding on tax" / "tax is ROUNDED into a packed-decimal field"; line 44 fail message
+    "byte mismatch — COMP-3 ROUNDED is half-up"; lines 51–78 forge `.agents/skills/comp-3/
+    SKILL.md` titled "COMP-3 packed-decimal rounding"; lines 80,83 "comp-3 skill". **Highest
+    priority — this is the literal demo script.**
+  - `web/STREAM_CONTRACT.md` lines 93,110,111,115,121 (comp-3 skill path + reason).
+  - `docs/DEMO_SCRIPT.md` line 17 "Agent diagnoses: unsupported `COMP-3` packed-decimal."
+  - `README.md` line 28; `docs/ARCHITECTURE.md` lines 44,94; `.agents/AGENTS.md` line 21;
+    `tests/test_agent.py` lines 156,160,209,210 (assert "comp-3" in the forge path).
+  - **Caveat — the COBOL itself legitimately USES `COMP-3`** (`src/sample/payroll.cob` lines
+    11,13,14 declare `PIC 9(7)V99 COMP-3`). Keeping COMP-3 as a *data type present in the
+    source* is fine and authentic. What's WRONG is claiming COMP-3 is the *cause of the test
+    failure / the thing the forged skill fixes*. The skill should be named/described for the
+    rounding+format idiom; the COBOL can still contain COMP-3 fields.
+  - Owners: backend-eng (skill name/path + test_agent.py), frontend-eng/doc-keeper
+    (mock-run.json, STREAM_CONTRACT.md, DEMO_SCRIPT, README, ARCHITECTURE, AGENTS.md).
 
 ### C14. BUILD_PLAN / requirements assume the impossible install + a self-contradiction  — NEEDS FIX
 - **Claim:** BUILD_PLAN.md 11:00–11:30 "install + pin GnuCOBOL into `base_environment`;
@@ -341,18 +369,19 @@ investor are in the room and will fact-check every number and every platform cla
   demo path" REQUIRES it OFF. You can't have both. If GnuCOBOL must be installed live, the
   demo is NOT network-free; if the demo is network-free, GnuCOBOL must already be present
   (which the docs don't support).
-- **Evidence:** see C4 sources. **Note after product correction:** the Gemini API sandbox
-  has network ON by default, so "no network in demo" is a self-imposed CHOICE, not a platform
-  limit — the contradiction is now between *our own demo rule* and a live apt, not between the
-  docs. The "apt-get won't work" half is also softened (network is on; only apt/root is
-  unconfirmed, task #8).
-- **Verdict: NEEDS FIX.** Resolve in lockstep with the C4 decision. If Option A
-  (golden_io.json primary): delete the "install GnuCOBOL" milestone, keep "no network"
-  (true and intentional), build-day task = "capture golden_io.json from a real cobc run
-  before the event." If Option B (mounted binary): demo stays network-free (mounted file,
-  not a download); rewrite requirements.txt line 6 + the milestone to "mount prebuilt cobc
-  binary," not apt. If Option C (live apt, IF task #8 confirms apt+root): then DROP the "no
-  network in demo path" rule — you can't live-install with network off; pick one story.
+- **Evidence:** see C4. **Resolved with C4:** apt/root are absent, so the *apt* form of the
+  milestone can't run; but the Gemini API sandbox has network ON by default, so a USERLAND
+  install (no root) at pre-warm IS viable.
+- **Verdict: NEEDS FIX (resolved via C4).** Rewrite the BUILD_PLAN "apt-get install + pin
+  GnuCOBOL into base_environment" milestone to the FINAL mechanism: **the agent userland-installs
+  GnuCOBOL at pre-warm** — `micromamba`/`conda install -c conda-forge gnucobol` (network on, no
+  root; persists in the env for the session). requirements.txt line 6 (`apt-get install -y
+  gnucobol`) -> drop/replace with a comment about the conda pre-warm install. (NOT a mounted
+  binary — "Binary file support is not yet available"; NOT apt — no root.) NOTE: the pre-warm
+  install needs network DURING pre-warm; the demo runs network-free AFTER, since the package
+  persists in the reused env — so reword "no network in demo path" to "no network during the
+  live demo run (deps installed at pre-warm)" to remove the apparent contradiction.
+  golden_io.json (real-cobc capture) is the cached fallback.
 
 ### C15. `google-genai>=1.55.0` version pin is unverified  — VERIFY
 - **Claim:** agent.py + requirements.txt assert the Interactions API needs
@@ -360,22 +389,49 @@ investor are in the room and will fact-check every number and every platform cla
 - **Attack:** if the real minimum differs, `pip install -r requirements.txt` could pull a
   version missing `client.interactions` / `client.agents`, and nothing runs. The number
   reads precise but I have not seen it in a primary source.
-- **Verdict: VERIFY** (asked researcher-agents). Pin to the exact version the live SDK
-  changelog/quickstart states; don't ship a guessed floor into the 45%-weighted demo.
+- **Verdict: RESOLVED — the catch was correct.** The `1.55.0` floor was wrong (that's the
+  model-interactions path). researcher docs confirm the managed-agents path needs
+  `google-genai >= 2.0.0` (cookbook). The repo is already bumped: `requirements.txt`
+  `>=2.6.0,<3.0.0`, `agent.py` `>=2.6.0`, README/ARCHITECTURE `>=2.0.0`. No further action.
 
 ---
 
-## Summary for the lead
+## Summary for the lead  (updated after the product correction)
 
-- **Stop-the-line:** **C4** (live GnuCOBOL is not achievable — redesign the oracle path) and
-  **C5** (byte-for-byte will fail on COMP-3 DISPLAY/rounding unless normalized). These two
-  hit the single most important differentiator and the on-stage RED→GREEN beat.
-- **Honesty fixes (a DeepMind judge will catch):** **C1b** (skills don't persist across fresh
-  runs), **C6** (wrong sandbox specs), **C7** (575k number unsourced), **C9** (1M context
-  irrelevant to the demo file), **C13** (the signature forge beat blames "COMP-3" but COMP-3
-  is not what makes the test fail — re-label it to the real idiom).
-- **Engineering gaps:** **C10** (the "hard cap" isn't enforced), **C11** (guessed SDK fields).
-- **Holding up well — lean into these:** **C2** (honesty framing is genuinely accurate),
-  **C3** (correct agent ID), **C8** (macro stats check out), **C1 mechanism** (runtime skill
-  discovery is real). The differential-oracle CONCEPT is sound and falsifiable; only the
-  *live-compile* execution and the *raw byte* comparison need rework.
+> **Product note (drives everything below):** all sandbox/network/spec facts must be sourced
+> to the **Gemini API** (`ai.google.dev`), NOT the **Enterprise Agent Platform**
+> (`docs.cloud.google.com`). I initially mixed them; the lead caught it. On the Gemini API:
+> network is ON by default, Python 3.12 / Node 22, 15-min idle snapshot / 7-day retention.
+
+- **C5 (TESTED) — RESOLVED + INDEPENDENTLY VERIFIED.** The byte-exact comparison is correct:
+  I compiled the committed `payroll.cob` with my own GnuCOBOL 3.2.0 and confirmed backend-eng's
+  `golden_io.json` (10/10) AND `payroll.py` (10/10) are byte-for-byte equivalent to the real
+  COBOL, including the half-cent tie cases. Nothing more to do here.
+- **#1 REMAINING FIX — C13 (PROVEN) — NOT YET LANDED.** The signature forge beat still blames
+  "COMP-3," which is empirically false (COMP-3 and USAGE-DISPLAY give byte-identical output;
+  the real cause is rounding + zero-pad format). Still present in `web/mock/mock-run.json` (the
+  literal on-stage UI script), `web/STREAM_CONTRACT.md`, `DEMO_SCRIPT.md`, `README.md`,
+  `ARCHITECTURE.md`, `.agents/AGENTS.md`, `tests/test_agent.py`. Re-label the forged skill to
+  "numeric DISPLAY format + ROUND-HALF-UP." (The COBOL keeping COMP-3 *fields* is fine — just
+  stop claiming COMP-3 is what FAILS.) This is now the highest-priority honesty item.
+- **C4 — NEEDS FIX (was FALSE; finalized).** Falsifiability INTACT. Only the MECHANISM is
+  wrong: "apt-get / pre-install GnuCOBOL into base_environment." **Live-compile SURVIVES**
+  (lead/task #8): the AGENT userland-installs `micromamba`/`conda install -c conda-forge
+  gnucobol` at pre-warm (ships its own compiler+libcob+gmp, no root) into the reused env_id
+  (no network needed live). golden_io.json (real-cobc capture, cross-verified) = cached
+  fallback. (Mounted-binary path REJECTED — "Binary file support is not yet available.")
+- **Other honesty fixes (a DeepMind judge will catch):** **C1b** (forged skills don't persist
+  across fresh agent invocations — "forks clean"), **C7** (NJ "575k backlogged" unsourced;
+  1600% IS confirmed), **C9** (1M context irrelevant to a 150-line demo file).
+- **Engineering gaps:** **C10** (the "hard cap at 4 + counter" isn't enforced in code, only in
+  the prompt), **C11** (guessed SDK/streaming field names). **C15 RESOLVED** — my catch was
+  right (floor is `>=2.0.0`, not 1.55.0); repo already bumped to `>=2.6.0,<3.0.0`.
+- **RETRACTED — my errors, corrected:** **C6 → CONFIRMED** (lead verified at the source: the
+  repo's Python 3.12 / Node 22 / **4 cores / 16 GB** / 15-min-snapshot / 7-day-retention are
+  ALL correct for the Gemini API; I'd cited the Enterprise Agent Platform). Do NOT edit those
+  numbers — the changes I floated earlier would introduce errors.
+- **Holding up well — lean into these:** **C2** (honesty framing genuinely accurate —
+  computer_use/file_search really are unsupported), **C3** (correct agent ID), **C8** (macro
+  stats $2.41T / 18-23% / $30B all check out — add inline cites), **C1 mechanism** (runtime
+  skill discovery is real). The differential-oracle CONCEPT is sound and falsifiable; the work
+  is in the byte-exact comparison (C5) and a few honest wording fixes.
