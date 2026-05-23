@@ -1337,3 +1337,24 @@ overclaims a demonstrated null; their OWN sample data (12-sample means 2785/2692
 non-monotonic 2 high<min / 6 high>min) supports "accepted; effect on depth INCONCLUSIVE" as the defensible
 statement (per L31). Net: #2 = ACCEPTED (200, version-stamped) + depth-effect INCONCLUSIVE + no control claimed.
 The L31 docs softening ("silently ignored" → inconclusive) still applies.
+
+## FINAL CLOSURE — L31 fixed in BOTH README + code; #1 grounding receipt SEEN; review CLOSED.
+- **L31 RESOLVED (fd62079 + README docs pass):** the "silently ignored / does NOT honor depth / high≈2096<
+  minimal≈2408" overclaim is GONE from agent.py (grep empty) AND README:103. Both now say "ACCEPTS the param
+  (no 400); effect on reasoning depth is NOT demonstrable / INCONCLUSIVE — noise-dominated." Conservative
+  framing applied exactly as recommended. (Skill-library README also corrected to "DISCOVERY live-verified,
+  banking is follow-up #9" — 88fa8a7.)
+- **#1 GROUNDING — RELAYED→SEEN, VERIFIED:** qa pasted the verbatim stdout histogram from the 884s grounded
+  payroll migration (LAZARUS_GROUND=1, real key, .venv/2.6.0): STREAM histogram has google_search_call:3 +
+  google_search_result:3 (+ the FETCH flattens to model_output:255 — the inverted-L16 trap, confirmed & handled
+  since agent.py reads the STREAM). The search step empirically FIRED on a real migration on the pinned SDK.
+  My L16 hold for #1 is CLEARED with version-stamped evidence I've now seen.
+- **Per-feature FINAL (version-stamped on .venv/2.6.0):** #1 grounding VERIFIED (3 google_search_call live);
+  #2 thinking ACCEPTED(200)+effect-INCONCLUSIVE, no control claimed (honest wording shipped); #3 cross-run
+  DISCOVERY verified (sentinel), banking = follow-up #9; #4 multi-module rule-recovery VERIFIED (PAYMAIN→TAXSUB),
+  NOT oracle-byte-verified (honest caveat shipped). Regression byte-identical + falsifiability core untouched.
+- **README capabilities table is honest on all four** (verified line-by-line). Only outstanding item is the
+  documented non-blocking follow-up #9 (bank the raw artifacts into the repo + the #3 banked-file-on-disk live
+  assertion). 
+**DEVIL'S-ADVOCATE REVIEW CLOSED.** Every finding L16-L31 is fixed/verified/honestly-deferred; no open honesty,
+feasibility, or regression issue. Merge (6504a78) stands; #9 is the only follow-up.
