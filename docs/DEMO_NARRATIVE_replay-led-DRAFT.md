@@ -1,11 +1,18 @@
-# LAZARUS — Honest replay-led 2-minute demo narrative (DRAFT)
+# LAZARUS — Honest replay-led 2-minute demo narrative (DRAFT — SUPERSEDED)
 
-> **Status:** DRAFT by devils-advocate, requested by team-lead, pending the USER's vehicle
-> decision (the user earlier said "no mock, fully live by default"; qa's wall-clock data —
-> live runs take 8–12+ min with minutes of blank screen — makes leading a *timed 2-min slot*
+> **STATUS: SUPERSEDED — the user chose STRICTLY LIVE in-slot (no mock lead), accepting the
+> multi-minute reality.** This replay-led draft is NOT the demo vehicle. It is kept ONLY for
+> decision-history and because the "If the user insists on live" section below + the honesty
+> guardrails still inform the live narrative. The live narrative lives in
+> `DEMO_NARRATIVE_live-DRAFT.md`. Do NOT hand this file to doc-keeper.
+>
+> ---
+>
+> **Original status (now moot):** DRAFT by devils-advocate, requested by team-lead, pending the
+> USER's vehicle decision (the user earlier said "no mock, fully live by default"; qa's wall-clock
+> data — live runs take 8–12+ min with minutes of blank screen — makes leading a *timed 2-min slot*
 > with a live run impractical). If the user picks pre-warmed-live or strictly-live instead, we
-> adapt (see "If the user insists on live" at the bottom). Hand to doc-keeper for DEMO_SCRIPT
-> once the vehicle is chosen.
+> adapt (see "If the user insists on live" at the bottom).
 >
 > **Why this draft exists:** the current `docs/DEMO_SCRIPT.md` narrates a *live* run completing
 > RED→GREEN→Download in 1:55. Per qa (3 real-key runs: ~8.3 min to >12 min), that timeline is

@@ -35,8 +35,9 @@
 | L3 | Local-oracle pytest presented truthfully (orchestrator IS the harness) | load-bearing (honesty) | **CONFIRMED + WIRED** — server.py:308 uses `oracle_harness_pytest_event` (source="differential_oracle", `oracle_equivalence[...]` case names, honest summary). NOT framed as the agent's own pytest. Tested. |
 | L4 | Phase progression is REAL (agent milestones), not faked timing | medium | **FIXED IN CODE (pending live)** — `phase_for_text` drives a forward-only, dedup'd rail off the streamed step text; the iteration counter no longer jumps the rail to TEST. Tested by test_phase_rail_advances_progressively (monotonic). |
 | L5 | golden_io.json (local truth) vs agent's own cobc — conflated? | load-bearing (honesty) | **CONFIRMED honest** — golden is the PRIMARY ground truth; agent live-refresh is opportunistic; prompt + oracle code keep them distinct. No conflation. |
-| L6 | 2-minute story legible for a judge | demo (45%) | **NEEDS FIX (demo strategy) — see L10.** The LIVE run takes 8–12+ min (qa: 3 runs) with several min of blank/working screen before any panel — it CANNOT be the demo vehicle in a 2-min slot. The honest fix is to lead with the `?mock=1` cached replay (22s, honestly labeled), not a live run. |
-| L10 | LIVE latency (8–12+ min) breaks the "2-minute LIVE demo" framing | demo (45%, decisive) | **NEEDS FIX (demo strategy, not code).** Lead the timed demo with the honestly-labeled cached replay; use/show the live run as proof-of-real, not as the in-slot vehicle. Mock provenance is honest. |
+| L6 | 2-minute story legible for a judge | demo (45%) | **RESOLVED via L10 → STRICTLY LIVE (user's call).** Not a 2-min story; reframed as "watch a real multi-minute migration + byte-for-byte proof." Live narrative drafted (DEMO_NARRATIVE_live-DRAFT.md). Legibility now hinges on L11 (UI must visibly progress). |
+| L10 | LIVE latency (8–12+ min) vs the "2-minute" framing | demo (45%, decisive) | **RESOLVED (user decision): STRICTLY LIVE in-slot, no mock lead** — user accepts the multi-minute reality; value = real work + proof, not speed. Honest live narrative drafted. Mock stays `?mock=1` break-glass only. |
+| L11 | Does the live UI visibly PROGRESS during the long run, or look FROZEN? | demo (45%, decisive) | **OPEN — #1 risk for strictly-live.** If the agent streams step text, the banner/trace move (alive). If silent until the end-burst, the screen looks hung for minutes → "watch it work" collapses. qa to confirm; if frozen, add live-progress surfacing (elapsed timer + step.delta streaming) BEFORE the slot. |
 | L7 | Missing `diff` made the COBOL→Python card VANISH (reveal-gated) | demo (45%) | **FIXED IN CODE** — `diff_event(cobol, migrated)` emitted from real sources → translate card reveals. Tested (diff right-side == the agent's real module). |
 | L8 | Live download/diff/oracle depended on an UNPINNED payroll.py path | load-bearing (honesty) | **FIXED IN CODE (pending live)** — agent.py:136 now pins "write the final module to /workspace/payroll.py", matching the extractor. qa to confirm the agent honors it live. |
 
@@ -221,7 +222,15 @@ now provably true: the agent cannot fake equivalence past the oracle. STRONG.
 
 ---
 
-## L10 — LIVE latency (8–12+ min) breaks the "2-minute LIVE demo" framing  — NEEDS FIX (demo strategy)
+## L10 — LIVE latency (8–12+ min) vs the "2-minute" framing  — RESOLVED: STRICTLY LIVE (user's call)
+
+> **DECISION (user, via team-lead):** STRICTLY LIVE in-slot, no mock lead. The user accepts the
+> multi-minute reality (consistent with their original "no mock" stance). The value is reframed
+> from speed to authenticity: watch a real agent do real work, ending in a byte-for-byte proof.
+> The replay-led draft is SUPERSEDED; the honest live narrative is in
+> `docs/DEMO_NARRATIVE_live-DRAFT.md`. This is a LEGITIMATE, honest choice — arguably MORE honest
+> than replay-led (zero risk of a replay being mistaken for live). The new risk it creates is L11
+> (the UI must visibly progress, not look frozen). Mock stays `?mock=1` break-glass ONLY.
 
 - **Claim (v2 plan, throughout):** a "2-minute LIVE demo" on the real key; "Live default;
   `?mock=1` break-glass only" (web/index.html `mode-live`, app.js, mock note).
@@ -244,9 +253,26 @@ now provably true: the agent cannot fake equivalence past the oracle. STRONG.
   - INVERT the framing in the demo narrative: "live by default" is the right PRODUCT default but
     the WRONG demo-slot default. The README/DEMO_SCRIPT should say the 2-min demo uses the cached
     replay of a real run, with the live path runnable on request (it just takes ~8–12 min).
-- **Owners:** team-lead / doc-keeper (demo narrative + DEMO_SCRIPT framing). Not a code change;
-  the mock + live both already work and are honestly labeled. This is the single most important
-  demo-readiness item: get the story + the vehicle right for the 2-min slot.
+- **Owners:** team-lead / doc-keeper (demo narrative + DEMO_SCRIPT framing). [Resolved — the
+  decision is strictly-live; doc-keeper applies `DEMO_NARRATIVE_live-DRAFT.md` to DEMO_SCRIPT.]
+
+## L11 — Does the live UI visibly PROGRESS during the long run, or look FROZEN?  — OPEN (#1 strictly-live risk)
+
+- **Why this is now decisive:** with the strictly-live decision (L10), the demo IS the multi-minute
+  live run. The "watch a real agent work" narrative HOLDS ONLY IF the screen visibly moves during
+  the run. qa observed the agent does "one long silent interaction, then bursts at the end."
+- **Attack:** if that means the WORKING banner sits on one line for minutes with no movement, a
+  judge sees a HUNG app, not a working agent — the whole strictly-live value prop collapses into
+  "staring at a frozen screen."
+- **Code reality:** server.py's `emit_step` pushes a `step` event per streamed chunk and updates
+  `_setWorking({action})`; the renderer advances the banner + trace + phase rail off that. So the
+  UI moves IFF the AGENT streams intermediate `step.delta` text during the run. If the agent goes
+  dark until the end, the UI is stuck regardless of the wiring.
+- **Verdict: OPEN — needs qa to confirm live whether the UI progresses or freezes.** If it
+  progresses: the live narrative works. If it freezes: add live-progress surfacing BEFORE the slot
+  — a visible elapsed timer + heartbeat ("still working — N s") + ensure step.delta chunks render
+  as they arrive, so the screen is provably alive. team-lead is chasing this with qa. This is the
+  #1 remaining risk for the chosen strictly-live demo.
 
 ---
 
