@@ -219,15 +219,21 @@ def _stub_markerless_agent(monkeypatch, *, output, env_id="env-x", emit=None):
     monkeypatch.setattr(agent_mod, "extract_environment_id", lambda r: env_id)
 
 
+def _output_echoing_module(module_src: str, *, trailer: str = "") -> str:
+    """Agent output that echoes the migrated module in a fenced ```python block (what the
+    real agent does — qa confirmed). The model output is the PRIMARY module source now (the
+    Files-API tarball can hang past the demo budget), so tests feed the module here."""
+    return f"Here is the migration:\n\n```python\n{module_src}\n```\n\n{trailer}"
+
+
 def test_safety_net_populates_every_panel_without_markers(monkeypatch):
-    """No LAZARUS_* markers at all: the server still drives diff + a structured oracle
-    pytest from the fetched payroll.py, plus fallback rules + the oracle banner."""
+    """No LAZARUS_* markers at all: the server still drives diff + a structured oracle pytest
+    from the agent's echoed payroll.py, plus fallback rules + the oracle banner."""
     sample_py = (ROOT / "src" / "sample" / "payroll.py").read_text()
-    monkeypatch.setattr(server, "_fetch_env_tarball",
-                        lambda env_id: _tar_with_module(sample_py))
     _stub_markerless_agent(
         monkeypatch,
-        output="All equivalence tests pass. byte-for-byte equivalent to original COBOL.",
+        output=_output_echoing_module(
+            sample_py, trailer="All equivalence tests pass. Equivalent to original COBOL."),
     )
 
     client = TestClient(server.app)
@@ -238,18 +244,18 @@ def test_safety_net_populates_every_panel_without_markers(monkeypatch):
     events = _collect_events(client, run_id)
     by_type = {e["type"]: e for e in events}
 
-    # Every panel populated from REAL output, no markers required.
+    # Every panel populated from REAL output, no markers + no working tarball required.
     assert sum(1 for e in events if e["type"] == "business_rule") >= 3   # fallback rules
     assert "oracle" in by_type
     diff = by_type["diff"]
     assert diff["left"]["name"] == "payroll.cob" and diff["right"]["name"] == "payroll.py"
     assert "IDENTIFICATION DIVISION" in diff["left"]["code"]              # real submitted COBOL
-    assert diff["right"]["code"] == sample_py                            # the agent's real module
+    assert "ROUND_HALF_UP" in diff["right"]["code"]                       # the agent's real module
     pt = by_type["pytest"]
     assert pt["source"] == "differential_oracle"                        # truthful labeling
     assert pt["result"] == "green" and len(pt["cases"]) == 10           # all golden cases
     assert all(c["name"].startswith("oracle_equivalence[") for c in pt["cases"])
-    assert by_type["download"]["content"] == sample_py
+    assert by_type["download"]["content"] and by_type["download"]["source"] == "model_output"
     assert by_type["done"]["verdict"] == "EQUIVALENT"
 
 
@@ -264,9 +270,8 @@ def test_safety_net_goes_red_when_module_diverges(monkeypatch):
         "net = g - tax\n"
         "print(f'{int(net):07d}.{int((net % 1) * 100):02d}')\n"
     )
-    monkeypatch.setattr(server, "_fetch_env_tarball",
-                        lambda env_id: _tar_with_module(naive_py))
-    _stub_markerless_agent(monkeypatch, output="all tests pass")  # agent OVER-claims
+    _stub_markerless_agent(  # agent OVER-claims, but echoes the naive module
+        monkeypatch, output=_output_echoing_module(naive_py, trailer="all tests pass"))
 
     client = TestClient(server.app)
     run_id = client.post("/api/migrate", json={
@@ -286,10 +291,17 @@ def test_crashing_module_goes_red_not_falsely_green(monkeypatch):
     """A fetched payroll.py that CRASHES under the oracle must show an explicit RED with a
     diagnostic note — never fall through to a prose-only green just because the agent claimed
     success. Otherwise a broken module + an over-claiming agent slips through."""
-    broken_py = "import sys\nraise SystemExit('boom')\n"   # exits non-zero on every input
-    monkeypatch.setattr(server, "_fetch_env_tarball",
-                        lambda env_id: _tar_with_module(broken_py))
-    _stub_markerless_agent(monkeypatch, output="All tests pass! Equivalent to COBOL.")
+    broken_py = (                                      # >=5 lines so it scrapes; crashes on run
+        "import sys\n"
+        "from decimal import Decimal\n"
+        "\n"
+        "def main():\n"
+        "    raise SystemExit('boom')\n"
+        "\n"
+        "main()\n"
+    )
+    _stub_markerless_agent(  # agent OVER-claims, but echoes the crashing module
+        monkeypatch, output=_output_echoing_module(broken_py, trailer="All tests pass!"))
 
     client = TestClient(server.app)
     run_id = client.post("/api/migrate", json={"cobol": "X", "filename": "p.cob"}).json()["run_id"]
@@ -386,3 +398,82 @@ def test_forge_event_carries_git_additions(monkeypatch):
     assert isinstance(forge["git"]["additions"], list) and len(forge["git"]["additions"]) >= 2
     assert forge["git"]["status"] == "A" and forge["git"]["commit"]
     assert "reload" in by_type
+
+
+def test_hanging_tarball_does_not_block_diff_or_pytest(monkeypatch):
+    """qa's live gap: the Files-API whole-env tarball can hang past the demo budget (>180s),
+    which blanked diff+download when the tarball was the primary source. Now the model-output
+    module is PRIMARY (instant), so even a tarball that raises/hangs never blocks diff, the
+    oracle pytest, or download — they all fire from the agent's echoed ```python block."""
+    def boom(env_id):
+        raise TimeoutError("The read operation timed out")
+    monkeypatch.setattr(server, "_fetch_env_tarball", boom)
+
+    sample_py = (ROOT / "src" / "sample" / "payroll.py").read_text()
+    _stub_markerless_agent(monkeypatch, output=_output_echoing_module(
+        sample_py, trailer="All equivalence tests pass; equivalent to the original COBOL."))
+
+    client = TestClient(server.app)
+    run_id = client.post("/api/migrate", json={
+        "cobol": (ROOT / "src" / "sample" / "payroll.cob").read_text(),
+        "filename": "payroll.cob",
+    }).json()["run_id"]
+    by_type = {e["type"]: e for e in _collect_events(client, run_id)}
+
+    # Despite the tarball timeout, every artifact still populated from the echoed module.
+    assert "diff" in by_type and by_type["diff"]["right"]["code"]      # diff not blanked
+    pt = by_type["pytest"]
+    assert pt["source"] == "differential_oracle" and pt["result"] == "green"
+    assert len(pt["cases"]) == 10                                      # oracle ran the module
+    dl = by_type["download"]
+    assert dl["content"] and dl["source"] == "model_output"           # honest provenance
+    assert by_type["done"]["verdict"] == "EQUIVALENT"
+
+
+def test_tarball_unavailable_plus_module_marker_populates_diff_and_download(monkeypatch):
+    """team-lead's deterministic path: tarball unavailable + the agent emits its module under
+    the explicit LAZARUS_MODULE: marker → diff + download both populate from model_output,
+    with no dependency on the slow whole-env tarball."""
+    def boom(env_id):
+        raise TimeoutError("tarball never returns")
+    monkeypatch.setattr(server, "_fetch_env_tarball", boom)
+
+    sample_py = (ROOT / "src" / "sample" / "payroll.py").read_text()
+    # The agent prints prose + the REQUIRED LAZARUS_MODULE marker block (not a bare fence).
+    output = (
+        "Recovered the rules and translated. All equivalence tests pass.\n\n"
+        "LAZARUS_MODULE:\n```python\n" + sample_py + "\n```\n"
+    )
+    _stub_markerless_agent(monkeypatch, output=output)
+
+    client = TestClient(server.app)
+    run_id = client.post("/api/migrate", json={
+        "cobol": (ROOT / "src" / "sample" / "payroll.cob").read_text(),
+        "filename": "payroll.cob",
+    }).json()["run_id"]
+    by_type = {e["type"]: e for e in _collect_events(client, run_id)}
+
+    assert "diff" in by_type and "ROUND_HALF_UP" in by_type["diff"]["right"]["code"]
+    dl = by_type["download"]
+    assert dl["content"] and dl["source"] == "model_output"
+    pt = by_type["pytest"]
+    assert pt["source"] == "differential_oracle" and pt["result"] == "green"
+    assert by_type["done"]["verdict"] == "EQUIVALENT"
+
+
+def test_tarball_and_output_both_empty_keeps_panels_honest(monkeypatch):
+    """If BOTH the tarball fetch fails AND the agent echoed no module, diff/download stay
+    absent (honest empty, never faked) and the verdict falls to the coarse prose check."""
+    monkeypatch.setattr(server, "_fetch_env_tarball",
+                        lambda env_id: (_ for _ in ()).throw(TimeoutError("nope")))
+    _stub_markerless_agent(monkeypatch, output="I finished. All tests pass. (no code block)")
+
+    client = TestClient(server.app)
+    run_id = client.post("/api/migrate", json={"cobol": "X", "filename": "p.cob"}).json()["run_id"]
+    by_type = {e["type"]: e for e in _collect_events(client, run_id)}
+
+    assert "diff" not in by_type                       # honestly absent, not fabricated
+    assert "download" not in by_type
+    # rules + oracle banner still populate; verdict from the coarse prose check
+    assert "business_rule" in by_type and "oracle" in by_type
+    assert by_type["done"]["verdict"] == "EQUIVALENT"  # prose says pass; no oracle to contradict
