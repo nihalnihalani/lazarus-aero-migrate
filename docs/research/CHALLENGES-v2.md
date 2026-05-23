@@ -606,3 +606,36 @@ INCONSISTENT run-to-run AND skips beats, because it's prose-driven (end-block) n
 (the `✓ ok` breadcrumbs carry no command text). This strengthens the case for the Phase-2 fix
 (broaden + dedup phase_for_text patterns / forward code_execution_call command text). Phase-2 polish,
 not a Phase-1 blocker; sign-off unaffected. Review remains fully closed.
+
+---
+
+## L14 — DEMO_SCRIPT "rail completes the full pipeline in order, verified on real runs" is FALSE on the captured runs (rail still skips translate/oracle/test) — NEEDS FIX
+
+- **Claim (DEMO_SCRIPT, 5d99443, intro + de-risking):** "the phase rail completes the full pipeline
+  **in order** (ingest→recover→translate→oracle→test→forge→reload→done — driven by the ordered
+  structured events, **verified on real captured runs**)."
+- **EVIDENCE — FALSE on every capture, including the POST-fix one.** I checked the actual streams:
+  - f9e71470 (pre-87a5572): rail = ingest→oracle→forge→reload→done (skips recover/translate/test).
+  - sse_full5.jsonl (captured 21:21, AFTER 87a5572's 21:19 commit): rail =
+    ingest→recover→**forge**→reload→done — skips **translate, oracle, test**. The diff/oracle/pytest
+    EVENTS all fired (panels populated, EQUIVALENT), but their phase-rail beats did NOT.
+- **ROOT CAUSE (found in the trace):** `emit_phase` is forward-only (`if idx < progress.idx:
+  return`). The `forge` phase is emitted EARLY from the agent's streamed prose (phase_for_text on the
+  step text mentions the skill/forge right after recover) — index 5 — which advances progress.idx
+  past translate(2)/oracle(3)/test(4). The later unconditional emit_phase("translate"/"oracle"/
+  "test") calls are then SUPPRESSED by the forward-only guard. So 87a5572 fixed the structured
+  emission but a SECOND prose-driven forge emission still eats the middle beats.
+- **Verdict: NEEDS FIX (script overclaim + a real rail bug).** Two honest options:
+  1. CODE FIX (preferred): stop emitting `forge`/any later beat from prose (phase_for_text) — drive
+     the rail ONLY from the ordered structured events (the diff→translate, oracle, pytest→test,
+     skill→forge emissions), so the forward-only guard sees them in order and the rail actually
+     completes ingest→recover→translate→oracle→test→forge→reload→done. THEN the script claim becomes
+     true and a fresh capture verifies it.
+  2. SCRIPT FIX (if code won't change before ship): reword to the TRUTH — "the rail lights a partial,
+     run-variable subset of beats (it currently skips some, e.g. translate/oracle/test, because a
+     prose-emitted forge advances the forward-only rail past them); during-run liveness is the
+     elapsed timer + ✓ ok breadcrumbs + trace, NOT the rail." Drop "completes the full pipeline in
+     order, verified on real captured runs" — that's not what the captures show.
+- Owner: integration-eng (the emit_phase/prose bug) + team-lead/doc-keeper (the script line). This
+  is the one remaining honesty overclaim; flagging before it's read by a judge. NOT a Phase-1 code
+  blocker (panels still populate; verdict honest) — it's a DEMO_SCRIPT accuracy blocker.
