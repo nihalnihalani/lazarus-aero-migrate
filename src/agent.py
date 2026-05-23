@@ -8,7 +8,8 @@ forges its own SKILL.md when it meets an unknown idiom.
 Reconciled to the VERIFIED Managed Agents / Interactions API surface (see
 docs/RESEARCH_MANAGED_AGENTS.md, consolidated 2026-05-23). Key facts this code
 depends on:
-  - SDK:               google-genai >= 2.6.0   (managed-agents path; NOT the 1.55 model path)
+  - SDK:               google-genai >= 2.4.0 floor (client.agents + Environment API ship in
+                       2.4.0; step.* SSE in 2.0.0; output_text in 2.3.0). We pin >= 2.6.0.
   - Base agent id:     "antigravity-preview-05-2026"  (Gemini 3.5 Flash; same string for
                        agent= and base_agent=)
   - Gemini 3.x config: BREAKING — do NOT send temperature / top_p / top_k anywhere; they
@@ -127,9 +128,13 @@ def _build_prompt(cobol: str) -> str:
         "still fresh — but the equivalence check stays byte-for-byte against the golden bytes.\n"
         "4. Generate equivalence tests asserting python_output == golden_cobol_output "
         "byte-for-byte; run pytest.\n"
-        "5. On failure from an UNKNOWN COBOL idiom, write "
+        "5. On failure, diagnose the TRUE idiom from the byte diff and write "
         ".agents/skills/<idiom>/SKILL.md teaching yourself how to handle it, commit it, "
-        "and report the path you wrote.\n"
+        "and report the path you wrote. For this module the divergence is numeric DISPLAY "
+        "de-editing (PIC 9(7)V99 -> zero-padded 7 int digits + '.' + 2 decimals) plus "
+        "COBOL `ROUNDED` = round-half-UP (use Decimal.quantize(ROUND_HALF_UP), NOT Python "
+        "round()/banker's). It is NOT the COMP-3 storage (USAGE DISPLAY emits identical "
+        "bytes). Name the skill for the real idiom (e.g. numeric-display-rounding).\n"
         "When done, state clearly whether all equivalence tests PASS.\n"
         f"Stop when tests pass or after {MAX_ITERATIONS} iterations.\n\n"
         f"COBOL:\n```cobol\n{cobol}\n```"

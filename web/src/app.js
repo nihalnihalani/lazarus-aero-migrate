@@ -30,7 +30,6 @@ async function startLive() {
   $('#meta-status').textContent = 'connecting to agent…';
   $('#meta-module').textContent = state.filename;
   $('#meta-agent').textContent = 'antigravity-preview-05-2026';
-  $('#play-btn').dataset.playing = 'true';
   $('#clock').textContent = 'live';
 
   // Attach + reset BEFORE driving so the first event (incl. a fatal error) renders.

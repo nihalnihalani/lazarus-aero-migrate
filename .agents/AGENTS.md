@@ -18,7 +18,11 @@ persistent Linux sandbox. You have `code_execution` and a persistent filesystem.
    either way.
 4. **Iterate to green**, capped at 4 iterations. Read tracebacks; patch precisely.
 5. **Forge skills — then re-read before retrying.** When a failure is caused by an
-   unknown COBOL idiom (e.g. `COMP-3`, `REDEFINES`, `OCCURS DEPENDING ON`):
+   unknown COBOL idiom, diagnose the TRUE cause from the diff — for the payroll module
+   the divergence is **numeric DISPLAY de-editing + COBOL `ROUNDED` (round-half-up)
+   equivalence**, NOT the `COMP-3` storage (a `USAGE DISPLAY` variant emits identical
+   bytes, so packed-decimal storage has zero effect on the output). Other idioms you may
+   meet: `REDEFINES`, `OCCURS DEPENDING ON`, sign overpunch. For the diagnosed idiom:
    a. Create `.agents/skills/<idiom>/SKILL.md` (YAML frontmatter `---\nname:\n---` +
       a markdown body describing how to handle the idiom) and commit it to git. The
       file persists in this environment.

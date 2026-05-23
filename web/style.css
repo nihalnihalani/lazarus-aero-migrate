@@ -446,27 +446,9 @@ body {
   transition: all .2s; display: inline-flex; align-items: center; justify-content: center;
 }
 .t-btn:hover { color: var(--green); border-color: var(--green-dim); box-shadow: var(--glow-green); }
-.t-btn.play .ic-pause { display: none; }
-.t-btn.play[data-playing="true"] .ic-play { display: none; }
-.t-btn.play[data-playing="true"] .ic-pause { display: inline; }
-.scrub {
-  width: 240px; height: 4px; background: var(--line); border-radius: 100px;
-  overflow: hidden; position: relative;
-}
-.scrub-fill {
-  height: 100%; width: 0; background: linear-gradient(90deg, var(--green-dim), var(--green));
-  box-shadow: var(--glow-green); transition: width .12s linear;
-}
+.t-btn.play .ic-pause { display: none; }   /* live: always the run glyph (a stream can't pause) */
 .clock { font-size: .62rem; color: var(--dust); min-width: 9ch; }
-.speeds { display: flex; gap: .25rem; }
-.speed-btn {
-  font-family: var(--mono); font-size: .6rem; color: var(--dust);
-  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
-  padding: .2rem .45rem; cursor: pointer; transition: all .2s;
-}
-.speed-btn:hover { color: var(--bone); }
-.speed-btn.active { color: var(--amber); border-color: var(--amber-dim); background: rgba(246,183,60,.08); }
-.status { font-size: .6rem; color: var(--dust); max-width: 22ch; }
+.status { font-size: .6rem; color: var(--dust); max-width: 30ch; }
 .download-btn {
   font-family: var(--display); font-weight: 800; font-size: .66rem;
   letter-spacing: .1em; color: var(--dust);
