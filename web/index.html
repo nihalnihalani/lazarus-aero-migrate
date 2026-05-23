@@ -4,12 +4,30 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>LAZARUS · Autonomous Legacy Modernization</title>
+  
+  <!-- Premium SEO & Open Graph Metadata -->
+  <meta name="description" content="LAZARUS is an autonomous legacy modernization engine that reads COBOL, recovers undocumented business rules, translates it to Python, and proves correctness using a live GnuCOBOL differential oracle." />
+  <meta name="keywords" content="COBOL, Python, Migration, Software Archaeology, Code Modernization, Gemini, Autonomous AI Agent" />
+  <meta name="theme-color" content="#06090b" />
+  <meta property="og:title" content="LAZARUS · Autonomous Legacy Modernization" />
+  <meta property="og:description" content="Raising dead legacy COBOL code back to life. Translated to clean Python, validated byte-for-byte using a real GnuCOBOL compiler oracle." />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="LAZARUS Aero-Migrate" />
+  
+  <!-- Twitter Card Metadata -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="LAZARUS · Autonomous Legacy Modernization" />
+  <meta name="twitter:description" content="Autonomous COBOL to Python legacy modernization with differential correctness proof." />
+  
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="./style.css" />
 </head>
-<body class="mode-live">
+<body class="mode-live crt-enabled">
+  <!-- Interactive CRT overlay effects -->
+  <div class="crt-screen" aria-hidden="true"></div>
+  <div class="crt-scanlines" aria-hidden="true"></div>
   <div class="bg" aria-hidden="true"></div>
 
   <header class="topbar">
@@ -22,6 +40,9 @@
       <span class="chip soft"><i>model</i><b id="meta-agent">antigravity-preview</b></span>
       <span class="chip soft"><i>iter</i><b><span id="iter-counter">0</span>/<span id="iter-cap">4</span></b></span>
       <span class="verdict-badge" id="verdict-badge"></span>
+      <button class="crt-toggle-btn" id="crt-toggle" title="Toggle CRT Scanline Style">
+        <span class="indicator-dot"></span><span class="btn-text">CRT Effect</span>
+      </button>
     </div>
   </header>
 
@@ -117,6 +138,14 @@
       <button class="t-btn ghost" id="restart-btn" title="re-run (r)">↺<span class="t-label">re-run</span></button>
       <span class="t-status"><span class="status-dot"></span><span id="clock">live</span></span>
     </div>
+    
+    <!-- Timeline Scrubber for presenting in Mock Fallback mode -->
+    <div class="t-mid" id="timeline-container" hidden>
+      <span class="scrub-time" id="scrub-current">00:00</span>
+      <input type="range" id="timeline-scrubber" min="0" max="100" value="0" class="timeline-slider" title="Drag to seek steps" />
+      <span class="scrub-time" id="scrub-total">00:00</span>
+    </div>
+
     <button class="download-btn" id="download-btn" disabled><span class="dl-ic">⤓</span> Download migrated Python</button>
   </footer>
 
