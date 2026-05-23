@@ -1,6 +1,28 @@
-google-genai>=1.55.0  # Interactions API / Managed Agents require >=1.55.0
-fastapi>=0.110.0
-uvicorn[standard]>=0.29.0
-sse-starlette>=2.0.0
-pytest>=8.0.0
-# System dependency (installed in the sandbox, not via pip): gnucobol  ->  apt-get install -y gnucobol
+# LAZARUS — pinned dependencies.
+# Beta APIs in play (Interactions / Managed Agents are -preview-05-2026), so we
+# pin EXACT versions and re-smoke-test the morning of the demo (see README).
+# Versions below are the ones the test suite + oracle were verified against
+# on 2026-05-23 (Python 3.12+ / 3.14).
+
+# --- Managed Agents driver (src/agent.py) ---
+# Managed Agents path requires google-genai >= 2.0.0 (per the official cookbook;
+# the 1.55.0 in the interactions docs is the MODEL-interactions path, not the
+# managed-agents path). Verified in docs/RESEARCH_MANAGED_AGENTS.md §5. Floor +
+# ceiling so a beta breaking change can't silently upgrade us mid-event.
+google-genai>=2.0.0,<3.0.0
+
+# --- Orchestrator / live-trace web server (src/agent.py, web/) ---
+fastapi==0.135.3
+uvicorn[standard]==0.41.0
+sse-starlette==3.0.3
+
+# --- Differential oracle test harness (tests/) ---
+# The oracle (src/differential_oracle.py) itself uses only the stdlib; pytest is
+# needed to run tests/ and to run the agent-generated equivalence tests on stage.
+pytest==9.0.2
+
+# System dependency (NOT pip-installable): GnuCOBOL provides `cobc`.
+#   sandbox / Linux:  apt-get install -y gnucobol
+#   local / macOS:    brew install gnucobol   (tested with GnuCOBOL 3.2.0)
+# If cobc is unavailable live, the oracle falls back to src/sample/golden_io.json
+# (real outputs captured from cobc on 2026-05-23) — same byte-for-byte guarantee.

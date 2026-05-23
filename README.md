@@ -4,7 +4,7 @@
 >
 > *Raising dead code back to life.*
 
-LAZARUS ingests legacy **COBOL**, translates it to modern **tested Python**, and — crucially — **proves the translation is correct by running the original COBOL as a ground-truth oracle**. When it meets a COBOL idiom it doesn't understand, it **writes itself a new skill (`SKILL.md`) live**, reloads, and continues until the migrated code is byte-for-byte equivalent.
+LAZARUS ingests legacy **COBOL**, translates it to modern **tested Python**, and — crucially — **proves the translation is correct by running the original COBOL as a ground-truth oracle**. When it meets a COBOL idiom it doesn't understand, it **writes itself a new skill (`SKILL.md`)** into its live sandbox and **re-reads it on the next pass of the same session** — repeating until the migrated code is byte-for-byte equivalent.
 
 ---
 
@@ -25,14 +25,14 @@ LAZARUS is a **single autonomous agent** (no fragile multi-agent orchestration) 
 2. **Recovers the lost business logic** — explains, in plain English, the undocumented rules the COBOL encodes (the "archaeology" that makes this more than a transpiler).
 3. **Translates** COBOL → idiomatic Python in the sandbox.
 4. **Proves equivalence** — compiles & runs the *original* COBOL via **GnuCOBOL** inside the sandbox, captures real outputs, and generates equivalence tests asserting the Python output matches **byte-for-byte**.
-5. **Self-heals via FORGE** — on an unsupported idiom (e.g. `COMP-3` packed-decimal, `REDEFINES`), it authors a new `SKILL.md`, commits it, hot-reloads, and re-runs until tests go **red → green**.
+5. **Self-heals via FORGE** — on an unsupported idiom (e.g. `COMP-3` packed-decimal, `REDEFINES`), it authors a new `SKILL.md` into its live sandbox; the next pass reuses the **same environment** and the skill is **re-discovered at startup**, and it re-runs until tests go **red → green**. (Within a session the skill stays live; a *fresh* invocation forks the base env and starts clean — to bank a skill permanently you re-register the agent with it mounted in `base_environment`. Auto-discovery + env-reuse persistence are documented; we do *not* claim mid-run hot-reload or cross-run accumulation.)
 
 ### Why this wins (the differentiators)
 
 | Differentiator | Why it matters |
 |---|---|
 | **Differential oracle (runs real COBOL)** | Defeats the #1 judge objection: "green tests on agent-written code prove nothing." We diff against the *actual* legacy output. |
-| **Self-authored `SKILL.md` (FORGE graft)** | The newest, least-used Managed Agents primitive. The on-stage "agent upgrades itself" beat is unforgettable and locks the **$5k Managed Agents bonus**. |
+| **Self-authored `SKILL.md` (FORGE graft)** | Uses the documented `.agents/skills/*/SKILL.md` auto-discovery primitive. The on-stage "agent upgrades itself" beat — write the skill, re-discover it on the next pass of the same live session — is unforgettable and locks the **$5k Managed Agents bonus**. |
 | **Business-rule recovery** | Reframes the project from "code translator" (seen 100×) to "institutional-knowledge archaeology" (never seen). |
 | **Single-agent honesty** | Uses only documented Managed Agents features: code execution + file persistence. No unsupported sub-agent/MCP claims. |
 
@@ -48,10 +48,10 @@ LAZARUS is a **single autonomous agent** (no fragile multi-agent orchestration) 
 ## 4. Tech Stack
 
 - **Model:** Gemini 3.5 Flash (`antigravity-preview-05-2026` base agent)
-- **Agent runtime:** Gemini API **Managed Agents** via the **Interactions API** (Python `google-genai`)
-- **Oracle:** GnuCOBOL (`cobc`) pre-installed in the persistent sandbox environment
-- **UI:** lightweight web front-end rendering live `interaction.steps` (the agent "working"), the diff viewer, and the test terminal
-- **Skills:** `.agents/AGENTS.md` + `.agents/skills/<name>/SKILL.md`
+- **Agent runtime:** Gemini API **Managed Agents** via the **Interactions API** (Python `google-genai >= 2.0.0`)
+- **Oracle:** GnuCOBOL (`cobc`) provisioned in the persistent sandbox environment
+- **UI:** lightweight web front-end rendering the live `step.*` event stream (the agent "working"), the diff viewer, and the test terminal
+- **Skills:** `.agents/AGENTS.md` + `.agents/skills/<name>/SKILL.md` (auto-discovered at startup)
 
 ## 5. Repository Layout
 

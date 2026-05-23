@@ -7,21 +7,21 @@ LAZARUS is a **single Managed Agent** running in one Google-hosted Linux sandbox
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
 │  Front-end (browser)                                                   │
-│   • drop-zone for COBOL          • live interaction.steps trace        │
+│   • drop-zone for COBOL          • live step.* event trace             │
 │   • plain-English logic panel    • COBOL↔Python diff viewer            │
 │   • pytest terminal (red→green)  • forged-skill / git-diff panel       │
 └───────────────▲───────────────────────────────────────────────┬──────┘
-                │ SSE stream (interaction.steps)                  │ user input
+                │ SSE stream (step.start/delta/stop)              │ user input
                 │                                                 ▼
 ┌───────────────┴───────────────────────────────────────────────────────┐
 │  Orchestrator (FastAPI)  src/agent.py                                   │
-│   client.interactions.create(agent="lazarus", input=..., stream=True)  │
-│   resumes via previous_interaction_id + environment=<id>               │
+│   client.interactions.create(agent="lazarus", input=..., stream=True,  │
+│       extra_body={"environment": <id>})  # reuse env to keep state     │
 └───────────────▲───────────────────────────────────────────────────────┘
                 │ Interactions API
 ┌───────────────┴───────────────────────────────────────────────────────┐
 │  MANAGED AGENT  (base: antigravity-preview-05-2026 · Gemini 3.5 Flash) │
-│  Persistent Ubuntu sandbox (Python 3.12, Node 22, GnuCOBOL pre-warmed) │
+│  Persistent Ubuntu sandbox (Python 3.12, Node 22; GnuCOBOL provisioned)│
 │                                                                        │
 │   Tools used:  code_execution · filesystem (persistent)               │
 │   Skills:      .agents/AGENTS.md + .agents/skills/*/SKILL.md           │
@@ -41,7 +41,16 @@ LAZARUS is a **single Managed Agent** running in one Google-hosted Linux sandbox
 4. **Build the oracle.** The agent compiles the *original* COBOL with `cobc -x` and runs it on a battery of inputs, capturing canonical outputs. **This is the ground truth** — not agent-invented assertions.
 5. **Generate equivalence tests.** `test_equivalence.py` asserts `python_output == cobol_output` byte-for-byte across the input battery.
 6. **Run + iterate.** `pytest` runs; failures stream into the UI (RED). The agent reads the traceback and patches.
-7. **FORGE self-heal.** If the failure is an *unknown idiom* (e.g. `COMP-3` packed decimal, `REDEFINES`, `OCCURS DEPENDING ON`), the agent writes a new `.agents/skills/<idiom>/SKILL.md` describing how to handle it, commits it, hot-reloads the agent, and re-runs. Tests go **GREEN**.
+7. **FORGE self-heal.** If the failure is an *unknown idiom* (e.g. `COMP-3` packed decimal, `REDEFINES`, `OCCURS DEPENDING ON`), the agent **writes a new `.agents/skills/<idiom>/SKILL.md`** describing how to handle it. The skill **stays live for the rest of the migration** because we keep working **in the same `environment_id`**; the next pass **re-reads `.agents/skills/`** from that live environment. It re-runs, and tests go **GREEN**.
+
+> **Verified vs. unverified — and the scope of "persist" (so we never overclaim on stage):**
+> - ✅ Startup auto-discovery of `.agents/skills/*/SKILL.md` is documented.
+> - ✅ A forged skill stays available **for the lifetime of the live environment you keep reusing** (`environment_id`).
+> - ⚠️ It does **NOT** carry into a *new* agent invocation. Verbatim: *"Each invocation forks the base environment, so every run starts clean."* A fresh run does **not** inherit skills forged in a previous run's environment.
+> - To make a forged skill **permanent**, **re-register the agent** with the skill mounted in `base_environment` (`agents.create(..., base_environment={"type":"remote","sources":[…SKILL.md…]})`), or fork from the saved `environment_id`.
+> - ⚠️ *Mid-interaction* hot-reload of a skill the agent just authored is **not documented** — LAZARUS triggers re-discovery on the next pass within the live environment, not a live in-flight reload.
+>
+> The on-stage beat ("the agent grafts itself a new skill and beats the idiom, in one live session") is fully real. We do **not** claim cross-run accumulation unless we re-register. Source: <https://ai.google.dev/gemini-api/docs/managed-agents-quickstart.md.txt>
 
 ## 3. Why the differential oracle matters (the judge-proofing)
 
@@ -59,8 +68,11 @@ LAZARUS answers it structurally: the **oracle is the original COBOL program's re
 
 ## 4. Managed Agents configuration (verified against live docs, May 2026)
 
-> Requires `google-genai >= 1.55.0`. `base_environment` is an **object** (not a bare
-> string); `sources` mounts files at the paths the agent auto-discovers.
+> Requires `google-genai >= 2.0.0`. `base_environment` is an **object** (not a bare
+> string); `sources` mounts files at the paths the agent auto-discovers. On
+> `interactions.create`, the environment is passed via **`extra_body={"environment": …}`**
+> (the SDK doesn't expose a typed top-level `environment=` kwarg yet — the runnable
+> cookbook uses `extra_body`).
 
 ```python
 from google import genai
@@ -82,23 +94,39 @@ client.agents.create(
 )
 
 # Run: first call provisions a fresh sandbox; capture the server-generated env id.
-itx = client.interactions.create(agent="lazarus", input=PROMPT, environment="remote", stream=True)
-# follow-up turns reuse files + forged skills:
+itx = client.interactions.create(agent="lazarus", input=PROMPT, stream=True,
+                                 extra_body={"environment": "remote"})
+# follow-up turns REUSE the environment (files + forged skills + oracle binary persist):
 itx2 = client.interactions.create(agent="lazarus", input=NEXT,
-                                  environment=itx.environment_id,
-                                  previous_interaction_id=itx.id)
+                                  extra_body={"environment": itx.environment_id})
 ```
 
-- **State dimensions are independent:** `previous_interaction_id` carries chat history; `environment=<env_id>` carries the sandbox files. We keep the environment (so forged skills + the oracle binary persist) while threading the conversation.
-- **Environment lifecycle:** `"remote"` provisions a fresh sandbox (~5s); reuse the returned `environment_id` to keep state. Sandboxes auto-snapshot after 15 min idle and are retained 7 days. 4 CPU / 16 GB (free during preview).
-- **Skills are config:** `.agents/AGENTS.md` (persona + loop policy) and `.agents/skills/<name>/SKILL.md` (auto-loaded idiom handlers). FORGE writes new ones at runtime.
-- **Observable steps:** every thought / tool call / code run streams via `interaction.steps` → rendered as the live "agent working" UI (this *is* the demo surface).
+- **State carrier:** the agent path threads state via **environment reuse** —
+  `extra_body={"environment": itx.environment_id}` keeps the sandbox files (forged
+  skills + the oracle binary) **alive across turns of the same session**. (`previous_interaction_id`
+  is the *model*-path history carrier; its behavior on the agent path is undocumented, so we rely on the environment.)
+- **Persistence is session-scoped, not eternal:** verbatim, *"Each invocation forks the
+  base environment, so every run starts clean."* So a brand-new invocation does **not**
+  inherit a prior run's forged skills. To bank a skill permanently, re-register the agent
+  with it mounted in `base_environment` (see §2 step 7).
+- **Environment lifecycle:** `"remote"` provisions a fresh sandbox (~5s); reuse the returned `environment_id` to keep state. Sandboxes auto-snapshot + stop after 15 min idle and are retained 7 days since last active (resumable by ID). 4 CPU / 16 GB (free during preview).
+- **Skills are config:** `.agents/AGENTS.md` (persona + loop policy) and `.agents/skills/<name>/SKILL.md` (idiom handlers **auto-discovered at startup**). FORGE writes new ones at runtime; they re-register on the next pass via environment reuse (see §2, step 7).
+- **Observable steps:** the agent streams Server-Sent Events — `step.start` / `step.delta` / `step.stop` plus `interaction.created` / `interaction.completed` — carrying `thought`, `code_execution_call/result`, and `model_output` steps. These render as the live "agent working" UI (this *is* the demo surface).
 
 ### Supported features we rely on (and ONLY these)
-✅ `code_execution` (Bash/Python) · ✅ persistent filesystem · ✅ `AGENTS.md`/`SKILL.md` · ✅ `interaction.steps`
+✅ `code_execution` (Bash/Python) · ✅ persistent filesystem · ✅ `google_search` · ✅ `url_context` · ✅ `AGENTS.md`/`SKILL.md` startup discovery · ✅ streamed `step.*` SSE events
 
-### Explicitly NOT used (documented as unsupported via Managed Agents API)
-❌ sub-agent orchestration · ❌ `mcp` · ❌ `computer_use` · ❌ `function_calling` · ❌ `file_search`
+### Explicitly NOT used (documented as unsupported by the Antigravity agent)
+❌ sub-agent orchestration · ❌ `mcp` · ❌ `computer_use` · ❌ `function_calling` · ❌ `file_search` · ❌ `google_maps` · ❌ structured outputs
+
+> **Model vs. agent-runtime (so this never reads as a contradiction):** the *model*
+> `gemini-3.5-flash` supports function calling, structured output, and file search;
+> the **Antigravity managed-agent runtime** we actually run exposes only
+> `code_execution` + `google_search` + `url_context` + filesystem (not
+> `function_calling` / `file_search` / `computer_use` / `mcp` / structured output).
+> Both are true — we build to the agent runtime's matrix. This honesty is a
+> deliberate strength: every primitive we demo is one the docs guarantee.
+> See `docs/RESEARCH_MANAGED_AGENTS.md §3`.
 
 ## 5. Components to build
 
@@ -113,7 +141,7 @@ itx2 = client.interactions.create(agent="lazarus", input=NEXT,
 
 ## 6. Data flow for the live demo
 
-`drop payroll.cob` → `interactions.create(stream=True)` → steps stream to UI → sandbox writes Python + compiles COBOL + runs both + pytest → RED → forge `SKILL.md` (git diff animates) → reload → pytest GREEN → `download` migrated module from the persistent environment.
+`drop payroll.cob` → `interactions.create(stream=True)` → steps stream to UI → sandbox writes Python + compiles COBOL + runs both + pytest → RED → forge `SKILL.md` (git diff animates) → next pass re-reads `.agents/skills/` from the **same live environment** → pytest GREEN → `download` migrated module from that environment.
 
 ## 7. Risks & mitigations
 
