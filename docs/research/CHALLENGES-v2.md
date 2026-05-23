@@ -417,3 +417,23 @@ so contained). Optional cheap TTL-cache fix.
 
 I will convert the DEMO sign-off to ✅ once #6 is committed (+ a visual liveness confirm) and #7
 lands. No unresolved honesty or completeness gaps remain on the code path.
+
+---
+
+## SHIPPING-COMMIT live re-verify (devils-advocate independent read of qa's run f9e71470)
+
+qa re-ran on the shipping commit (6b0b89d/ea6fe12); I independently read `/tmp/sse_full4.jsonl`
+(228 events). CONFIRMED: all 10 types fire; pytest GREEN, source=agent_pytest, 25 cases;
+diff.right == download.content (True), source=model_output, 1802B; verdict EQUIVALENT. Wall-clock
+~8.6 min (tarball gate removed). Completeness + honesty hold on the actual shipping code. Good.
+
+**One precision correction to qa's summary (not a blocker).** qa reported the "phase-rail gap
+RESOLVED — 23 phase events advanced progressively." Accurate count, but the breakdown is
+`ingest×2, oracle×15, forge×4, reload×1, done×1` — i.e. 15 of the 23 are REDUNDANT re-emits of the
+SAME `oracle` phase. The collapsed rail sequence is `ingest → oracle → forge → reload → done`; it
+still SKIPS recover/translate/test. So the honest characterization is "the rail advances FURTHER
+than before (was ingest→forge→done) but is NOT fully progressive, and over-emits oracle." This is
+strictly better and harmless (the heartbeat already clears the frozen bar), and it falls under the
+Phase-2 "richer phase-rail advancement" item — NOT a Phase-1 blocker. Flagging only so the record
+is precise: "more phase movement," not "fully resolved." (A Phase-2 fix would dedup the oracle
+re-emits + map recover/translate/test milestones in phase_for_text.)
