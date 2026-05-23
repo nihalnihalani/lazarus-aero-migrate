@@ -1158,3 +1158,15 @@ them).** Not distrust of qa — it's the difference between "told" and "verified
   likely): accepted-but-ignored on 2.6.0 (matches memory + the shipped trace). The user-facing "no depth control"
   claim is safe either way; the precise mechanism wording + the THINKING_REJECTED-dead-code question hinge on the
   probe. This is the one fact qa and I must AGREE on before I sign #2 (per team-lead's explicit ask).
+
+## L25/L26 — INSTRUMENTATION LANDED (7ad5de2), verified by me — exactly the receipts I asked for
+integration-eng's 7ad5de2 added the observability I requested, honestly framed (no behavior change; 149 green;
+flags-off byte-identical confirmed):
+- L25 grounding count: when grounding is ON, end-of-run emits `[grounding_tool_count=N (google_search=.., 
+  url_context=..) — web-grounding fired this run; an opportunistic consult, not the migration driver]` for N>0,
+  or `[grounding_tool_count=0 — web-grounding was ENABLED but did NOT fire this run (the agent solved it without
+  web research)]` for N==0. This is the histogram/count I needed — AND it honestly reports 0 (can't accidentally
+  claim grounding fired when it didn't). Gated on `ground_on` → grounding OFF prints nothing (byte-identical).
+- L26 function_call breadcrumb: `🛠 <name>` surfaces the internal tool name live (auditable).
+So on qa's NEXT grounding run the count prints in-band — #1's receipt is now self-producing. My L25 honesty
+framing ("opportunistic consult, not the driver") is baked into the trace string verbatim. Good.
