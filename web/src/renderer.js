@@ -130,6 +130,10 @@ export class Renderer {
   }
 
   reset(meta = {}) {
+    if (this._forgeTimer) {
+      clearTimeout(this._forgeTimer);
+      this._forgeTimer = null;
+    }
     const r = this.refs;
     r.trace.innerHTML = '';
     r.rules.innerHTML = '';
@@ -375,6 +379,19 @@ export class Renderer {
 
     // Type the additions in line-by-line for the "writing itself" effect.
     const lines = ev.git.additions || [];
+    
+    // If seeking, render the code block synchronously to keep seeks snappy and free of timer leaks
+    if (ev._seeking) {
+      for (const line of lines) {
+        const row = el('div', 'diff-add in', `<span class="diff-sign">+</span><span>${escapeText(line) || '&nbsp;'}</span>`);
+        diff.appendChild(row);
+      }
+      const commit = el('div', 'forge-commit in', `✓ ${escapeText(ev.git.commit)}`);
+      r.forge.appendChild(commit);
+      diff.scrollTop = diff.scrollHeight;
+      return;
+    }
+
     let i = 0;
     const step = () => {
       if (i >= lines.length) {

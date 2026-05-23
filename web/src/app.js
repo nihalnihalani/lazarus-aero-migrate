@@ -22,6 +22,15 @@ const state = {
   loaded: false,
   mock: new URLSearchParams(window.location.search).get('mock') === '1',
   mockTimers: [],    // scheduled setTimeout ids for the break-glass replay
+  mockEvents: [],    // raw event cache for seeking
+  isScrubbing: false
+};
+
+const formatTime = (ms) => {
+  const sec = Math.floor(ms / 1000);
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 };
 
 function bindPlayer(player) {
@@ -47,14 +56,58 @@ async function startMock() {
   try {
     const res = await fetch('./mock/mock-run.json', { cache: 'no-store' });
     const run = await res.json();
-    for (const ev of (run.events || [])) {
-      state.mockTimers.push(setTimeout(() => state.player.push(ev), ev.t ?? 0));
-    }
+    state.mockEvents = run.events || [];
+    
+    // Set up range scrubber
+    const scrubber = $('#timeline-scrubber');
+    scrubber.max = state.mockEvents.length - 1;
+    scrubber.value = 0;
+    
+    const maxT = state.mockEvents[state.mockEvents.length - 1]?.t ?? 0;
+    $('#scrub-total').textContent = formatTime(maxT);
+    $('#timeline-container').hidden = false;
+    
+    // Begin playback
+    playMockFrom(0);
   } catch (err) {
     state.player.push({ type: 'step', kind: 'status', status: 'error',
       title: 'cached run unavailable',
       text: `Could not load mock/mock-run.json: ${err.message} (serve over http).` });
   }
+}
+
+function playMockFrom(startIndex) {
+  state.mockTimers.forEach(clearTimeout);
+  state.mockTimers = [];
+  $('#play-btn').setAttribute('data-playing', 'true');
+  const scrubber = $('#timeline-scrubber');
+  
+  // Re-seed state up to startIndex instantly
+  state.player.seek(startIndex);
+  scrubber.value = startIndex;
+  const startT = state.mockEvents[startIndex]?.t ?? 0;
+  $('#scrub-current').textContent = formatTime(startT);
+  
+  // Queue subsequent actions
+  for (let i = startIndex + 1; i < state.mockEvents.length; i++) {
+    const ev = state.mockEvents[i];
+    const delay = (ev.t ?? 0) - startT;
+    state.mockTimers.push(setTimeout(() => {
+      if (state.isScrubbing) return;
+      state.player.push(ev);
+      scrubber.value = i;
+      $('#scrub-current').textContent = formatTime(ev.t ?? 0);
+      if (i === state.mockEvents.length - 1) {
+        $('#play-btn').setAttribute('data-playing', 'false');
+      }
+    }, delay));
+  }
+}
+
+function pauseMock() {
+  state.mockTimers.forEach(clearTimeout);
+  state.mockTimers = [];
+  $('#play-btn').setAttribute('data-playing', 'false');
 }
 
 async function startLive() {
@@ -131,11 +184,50 @@ function wireDropzone() {
 }
 
 function wireControls() {
-  // Live stream: ▶ / restart (re)run the migration. There is no pause/scrub of
-  // a live stream — those timeline controls are hidden in CSS.
-  $('#play-btn').addEventListener('click', () => state.loaded && startLive());
-  $('#restart-btn').addEventListener('click', () => state.loaded && startLive());
+  // Transport Play Button
+  $('#play-btn').addEventListener('click', () => {
+    if (!state.loaded) return;
+    if (state.mock) {
+      const playing = $('#play-btn').getAttribute('data-playing') === 'true';
+      if (playing) {
+        pauseMock();
+      } else {
+        const scrubber = $('#timeline-scrubber');
+        playMockFrom(parseInt(scrubber.value, 10));
+      }
+    } else {
+      startLive();
+    }
+  });
+
+  // Re-run Button
+  $('#restart-btn').addEventListener('click', () => {
+    if (!state.loaded) return;
+    if (state.mock) {
+      playMockFrom(0);
+    } else {
+      startLive();
+    }
+  });
+  
   $('#download-btn').addEventListener('click', () => state.renderer.triggerDownload());
+
+  // Set up rangeslider timeline scrubber seeking for rehearsal presenter
+  const scrubber = $('#timeline-scrubber');
+  scrubber.addEventListener('input', () => {
+    if (!state.mockEvents.length) return;
+    state.isScrubbing = true;
+    pauseMock();
+    const idx = parseInt(scrubber.value, 10);
+    state.player.seek(idx);
+    const ev = state.mockEvents[idx];
+    if (ev) {
+      $('#scrub-current').textContent = formatTime(ev.t ?? 0);
+    }
+  });
+  scrubber.addEventListener('change', () => {
+    state.isScrubbing = false;
+  });
 
   // Agent activity drawer: collapsed shows only the latest action; toggle for the full log.
   const activity = $('#activity');
@@ -147,8 +239,30 @@ function wireControls() {
 
   document.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT') return;
-    if (e.code === 'Space') { e.preventDefault(); state.loaded && startLive(); }
-    if (e.key === 'r') state.loaded && startLive();
+    if (e.code === 'Space') {
+      e.preventDefault();
+      if (!state.loaded) return;
+      if (state.mock) {
+        const playing = $('#play-btn').getAttribute('data-playing') === 'true';
+        if (playing) pauseMock();
+        else playMockFrom(parseInt(scrubber.value, 10));
+      } else {
+        startLive();
+      }
+    }
+    if (e.key === 'r') {
+      if (!state.loaded) return;
+      if (state.mock) playMockFrom(0);
+      else startLive();
+    }
+  });
+}
+
+function wireCrtToggle() {
+  const toggleBtn = $('#crt-toggle');
+  if (!toggleBtn) return;
+  toggleBtn.addEventListener('click', () => {
+    document.body.classList.toggle('crt-enabled');
   });
 }
 
@@ -156,6 +270,7 @@ async function main() {
   document.body.classList.add(state.mock ? 'mode-mock' : 'mode-live');
   wireDropzone();
   wireControls();
+  wireCrtToggle();
   state.renderer.reset({ iteration_cap: 4 });
   $('#clock').textContent = state.mock ? 'cached' : 'live';
 
