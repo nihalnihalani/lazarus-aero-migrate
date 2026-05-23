@@ -1050,3 +1050,27 @@ practice — correctly documented as defensive-only insurance.
 control, backed by real interleaved-sample token numbers. Sign-off conditions both MET. Only residual: no
 README/UI/DEMO line may imply thinking-depth control (DEMO_SCRIPT.md:54 "Pin thinking level" still needs the
 reword — flagged to team-lead).
+
+## L25 — GROUNDING (#1) honesty nuance: in grounding mode the agent MOSTLY compiled cobc live, barely web-researched — claim must not overstate causal contribution
+
+- **What the grounding-mode run ACTUALLY did (from qa_capture_ground.out.txt narration, ~58 step intents):**
+  only 2 are genuine WEB-search intents ("search the web for PAYROLL.COB", "search for COBOL display
+  formats and de-editing rules"); ~3 more "search" mentions are FILESYSTEM searches (not web). Meanwhile
+  ~49 mentions are install-micromamba / install-gnucobol / compile-cobc / generate-its-own-golden. So even
+  with LAZARUS_GROUND=1, the agent OVERWHELMINGLY solved the task by compiling the original COBOL live and
+  empirically capturing outputs — NOT by web research. This also explains the ZERO `SOURCE:` citations
+  (L17-adjacent): the agent barely used the web, so it had little to cite.
+- **Why this matters for the claim (not the code):** the grounding preamble says "research the idiom via
+  google_search/url_context BEFORE forging." On this task that is NOT what predominantly happened — the
+  agent's path was empirical (compile+run), which is arguably the BETTER engineering choice but is NOT
+  "grounded research drove the migration." Demoing/claiming "web-grounding researches the dialect before
+  forging" would OVERSTATE grounding's causal role on this sample. Honest framing: "with grounding on, the
+  agent MAY consult google_search/url_context for an unfamiliar idiom (and we surface 🔎/🌐 + grounding_tool_
+  count when it does); on the payroll sample it mostly verified empirically by compiling the original COBOL."
+- **Verdict: NOT a code defect — a CLAIM-SCOPING finding.** Two things for sign-off: (1) qa STILL must show
+  the histogram/grounding_tool_count so we know whether the 2 web-search intents even FIRED as
+  google_search_call steps (if count==0, grounding did NOT fire at all on this run and #1 is unproven-live
+  despite the flag); (2) whatever the count, the demo/README must frame grounding as an OPPORTUNISTIC
+  consult, not the driver of the migration. If qa picks a sample with a genuinely obscure idiom (where the
+  agent CAN'T just compile its way out), grounding's value would show more clearly — worth trying for a
+  stronger #1 proof.
