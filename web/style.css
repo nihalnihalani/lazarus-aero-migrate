@@ -1,6 +1,8 @@
 /* ============================================================================
-   LAZARUS — single-focus console. One step on screen at a time, centered,
-   calm, legible. The agent log is demoted to a drawer. Real data by default.
+   LAZARUS — progressive-reveal operator console. Completed step cards stay
+   visible and accumulate in a calm vertical flow; the active beat is
+   emphasized; the screen is never empty. A WORKING banner keeps a long live
+   run from ever looking frozen. Real data by default; ?mock=1 break-glass.
    ============================================================================ */
 
 :root {
@@ -19,11 +21,12 @@
 
   --mono:    'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
   --display: 'Archivo', system-ui, -apple-system, sans-serif;
-  --wordmark:'Major Mono Display', var(--mono);
+  /* wordmark is a clean, heavy display face — legible, obviously "LAZARUS" */
+  --wordmark:'Archivo', system-ui, sans-serif;
 
   --radius: 16px;
   --radius-sm: 10px;
-  --col: 920px;            /* the single centered column */
+  --col: 940px;            /* the single centered column */
 }
 
 * { box-sizing: border-box; }
@@ -49,9 +52,12 @@ b { color: var(--text); font-weight: 600; }
   flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between;
   gap: 14px; padding: 15px clamp(18px, 4vw, 48px); border-bottom: 1px solid var(--line);
 }
-.brand { display: flex; align-items: baseline; gap: 9px; }
-.brand-mark { color: var(--accent); font-size: 18px; }
-.brand-name { font-family: var(--wordmark); font-size: 17px; letter-spacing: 1px; color: #eafff5; }
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand-mark { color: var(--accent); font-size: 18px; line-height: 1; }
+.brand-name {
+  font-family: var(--wordmark); font-weight: 800; font-size: 18px;
+  letter-spacing: 4px; color: #eafff5; text-transform: uppercase;
+}
 .topbar-meta { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
 .chip { display: inline-flex; align-items: baseline; gap: 6px; padding: 4px 11px; border: 1px solid var(--line); border-radius: 99px; background: var(--surface); font-size: 11.5px; }
 .chip i { color: var(--muted); font-style: normal; text-transform: uppercase; font-size: 9.5px; letter-spacing: 1px; }
@@ -87,7 +93,7 @@ body.no-key .status-dot, body.backend-down .status-dot { background: var(--amber
 @keyframes pulse { 50% { opacity: .3; } }
 
 /* ── progress stepper ─────────────────────────────────────────── */
-.phase-rail { display: flex; align-items: center; justify-content: center; gap: 2px; flex-wrap: wrap; margin-bottom: clamp(20px, 4vw, 40px); }
+.phase-rail { display: flex; align-items: center; justify-content: center; gap: 2px; flex-wrap: wrap; margin-bottom: clamp(18px, 3vw, 28px); }
 .rail-step { display: inline-flex; align-items: center; gap: 6px; padding: 4px 7px; white-space: nowrap; }
 .rail-step:not(:last-child)::after { content: ""; width: 14px; height: 1px; background: var(--line); }
 .rail-dot { width: 7px; height: 7px; border-radius: 99px; border: 1.5px solid var(--muted); transition: .3s; }
@@ -97,34 +103,52 @@ body.no-key .status-dot, body.backend-down .status-dot { background: var(--amber
 .rail-step.active .rail-dot { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 12px var(--accent); }
 .rail-step.active .rail-label { color: var(--accent); }
 
-/* ── single-focus area: only the ACTIVE step's card is shown ───── */
-.focus { min-height: 320px; }
-.card { display: none; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); overflow: hidden; }
+/* ── WORKING banner: current phase + spinner + latest action ───── */
+/* keeps a multi-minute live run from ever looking frozen. */
+.working {
+  display: flex; align-items: center; gap: 14px;
+  margin-bottom: clamp(18px, 3vw, 26px); padding: 14px 18px;
+  border: 1px solid var(--accent-2); border-radius: var(--radius);
+  background: linear-gradient(180deg, rgba(84,240,166,.06), rgba(12,19,17,.5));
+}
+.working[hidden] { display: none; }
+.working-text { min-width: 0; flex: 1 1 auto; }
+.working-phase { font-size: 13px; color: var(--accent); font-weight: 600; letter-spacing: .3px; }
+.working-action { font-size: 12px; color: var(--text-mid); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.working-action:empty { display: none; }
+.working-iter { flex: 0 0 auto; font-size: 10px; letter-spacing: 1px; color: var(--muted); text-transform: uppercase; }
+.working-iter:empty { display: none; }
+
+/* ── progressive flow: cards reveal as they get data + accumulate ─ */
+.flow { display: flex; flex-direction: column; gap: 16px; min-height: 200px; }
+
+/* a card is hidden until the renderer marks it .has-data, then it rises in. */
+.card { display: none; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); overflow: hidden; opacity: 0; transform: translateY(10px); transition: opacity .45s ease, transform .45s ease, border-color .3s ease, box-shadow .3s ease; }
+.card.has-data { display: block; }
+.card.in { opacity: 1; transform: none; }
+
+/* completed (revealed but not active) cards stay readable but quieter */
+.card.has-data:not(.active) { opacity: .82; }
+.card.has-data:not(.active):hover { opacity: 1; }
+
+/* the active beat is emphasized with an accent border + soft glow */
+.card.active { opacity: 1; border-color: var(--accent-2); box-shadow: 0 0 0 1px rgba(84,240,166,.18), 0 0 36px -12px rgba(84,240,166,.4); }
+
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--line); }
 .card-title { font-size: 13px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text); font-weight: 600; }
+.card.active .card-title { color: var(--accent); }
 .card-note { font-size: 11.5px; color: var(--muted); } .card-note b { color: var(--accent); }
 .card-body { padding: 20px; }
 
-/* show only the card for the current phase */
-#stage[data-phase="recover"]   .card[data-when="recover"],
-#stage[data-phase="translate"] .card[data-when="translate"],
-#stage[data-phase="oracle"]    .card[data-when="test"],
-#stage[data-phase="test"]      .card[data-when="test"],
-#stage[data-phase="diagnose"]  .card[data-when="test"],
-#stage[data-phase="forge"]     .card[data-when="forge"],
-#stage[data-phase="reload"]    .card[data-when="forge"] { display: block; animation: rise .4s ease; }
-/* review mode: when finished, show everything together */
-#stage[data-phase="verify"] .card, #stage[data-phase="done"] .card { display: block; margin-bottom: 18px; }
-@keyframes rise { from { opacity: 0; transform: translateY(8px); } }
-
-/* idle state while the agent works before the first artifact */
-.focus-idle { display: flex; align-items: center; justify-content: center; gap: 12px; min-height: 320px; color: var(--text-mid); font-size: 14px; }
-#stage[data-phase="recover"] .focus-idle, #stage[data-phase="translate"] .focus-idle,
-#stage[data-phase="oracle"] .focus-idle, #stage[data-phase="test"] .focus-idle,
-#stage[data-phase="diagnose"] .focus-idle, #stage[data-phase="forge"] .focus-idle,
-#stage[data-phase="reload"] .focus-idle, #stage[data-phase="verify"] .focus-idle,
-#stage[data-phase="done"] .focus-idle { display: none; }
-.spinner { width: 16px; height: 16px; border: 2px solid var(--accent-2); border-top-color: var(--accent); border-radius: 99px; animation: spin .8s linear infinite; }
+/* idle state — only before the very first card has data; never a blank screen */
+.flow-idle { display: flex; align-items: center; justify-content: center; gap: 12px; min-height: 200px; color: var(--text-mid); font-size: 14px; }
+.flow-idle.gone { display: none; }
+/* fatal-error state: shown front-and-center so the flow is never blank */
+.flow-idle.is-error { align-items: stretch; }
+.flow-error { width: 100%; padding: 20px 22px; border: 1px solid #5a2a2a; border-radius: var(--radius); background: rgba(255,107,107,.06); }
+.flow-error-title { color: var(--red); font-weight: 600; font-size: 14px; letter-spacing: .3px; margin-bottom: 6px; }
+.flow-error-text { color: var(--text-mid); font-size: 12.5px; line-height: 1.6; white-space: pre-wrap; }
+.spinner { width: 16px; height: 16px; border: 2px solid var(--accent-2); border-top-color: var(--accent); border-radius: 99px; animation: spin .8s linear infinite; flex: 0 0 auto; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* (business rules) */
@@ -154,6 +178,7 @@ body.no-key .status-dot, body.backend-down .status-dot { background: var(--amber
 
 /* (proof / pytest) */
 .term-verdict { font-size: 11px; letter-spacing: 2px; font-weight: 700; padding: 4px 12px; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); }
+.term-verdict:empty { display: none; }
 .term-verdict.running { color: var(--amber); border-color: #5a4a2a; }
 .term-verdict.red { color: var(--red); border-color: #5a2a2a; background: rgba(255,107,107,.08); }
 .term-verdict.green { color: #04130c; background: var(--accent); border-color: var(--accent); }
@@ -197,7 +222,6 @@ body.no-key .status-dot, body.backend-down .status-dot { background: var(--amber
 .activity-toggle { display: flex; align-items: center; gap: 9px; width: 100%; background: none; border: 0; cursor: pointer; color: var(--text-mid); font-family: var(--mono); font-size: 12px; letter-spacing: .5px; padding: 0 2px 10px; }
 .live-dot { width: 7px; height: 7px; border-radius: 99px; background: var(--accent); box-shadow: 0 0 9px var(--accent); animation: pulse 1.6s infinite; flex: 0 0 auto; }
 .activity-hint { margin-left: auto; color: var(--muted); font-size: 11px; }
-.activity.open .activity-hint::after { content: ""; }
 .src-peek { margin: 0 0 10px; padding: 10px 14px; background: #080d0b; border: 1px solid var(--line-soft); border-radius: var(--radius-sm); color: var(--text-mid); font-size: 11px; line-height: 1.5; max-height: 90px; overflow: auto; white-space: pre; display: none; }
 .src-peek.show { display: block; }
 .trace-stream { display: flex; flex-direction: column; gap: 9px; }
@@ -221,6 +245,14 @@ body.no-key .status-dot, body.backend-down .status-dot { background: var(--amber
 .trace-dur { font-size: 10px; color: var(--muted); margin-left: auto; }
 .trace-text { color: var(--text-mid); font-size: 12.5px; line-height: 1.6; }
 .trace-code { margin: 6px 0 0; padding: 9px 11px; background: #070b09; border-radius: 7px; font-size: 11.5px; line-height: 1.55; overflow-x: auto; color: var(--text); white-space: pre; }
+
+/* syntax-highlight tokens (highlight.js wraps matches in .tok-*) */
+.tok-comment { color: var(--muted); font-style: italic; }
+.tok-string  { color: var(--amber); }
+.tok-keyword { color: var(--accent); }
+.tok-builtin { color: #7fd3ff; }
+.tok-number  { color: #e08fd0; }
+.tok-flag    { color: #7fd3ff; }
 
 /* ── transport ────────────────────────────────────────────────── */
 .transport { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 13px clamp(18px, 4vw, 48px); border-top: 1px solid var(--line); background: linear-gradient(0deg, rgba(12,19,17,.92), rgba(6,9,11,.5)); backdrop-filter: blur(6px); position: sticky; bottom: 0; }
