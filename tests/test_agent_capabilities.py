@@ -939,3 +939,47 @@ def test_migrate_single_file_still_default(agent_mod, tmp_path):
     assert sent.startswith("Migrate this COBOL program to idiomatic Python.")
     assert "/workspace/payroll.py" in sent
     assert "COBOL CODEBASE" not in sent      # not the multi-module prompt
+
+
+# --- CLI entry point dispatch (main(), --input nargs="+"; L23 opt-a) -------------------
+# main() routes ONE --input path to migrate(cobol_path=...) (single-file default) and
+# MULTIPLE paths to migrate(cobol_paths=[...]) (whole-codebase). Network-free: genai.Client,
+# ensure_agent, and migrate are all patched so no SDK/network is touched. This guards the
+# CLI dispatch that closes DA L23 (whole-codebase needs a real entry point, not library-only).
+def _run_main(agent_mod, monkeypatch, argv):
+    """Invoke agent.main() with a patched client/ensure_agent/migrate and the given argv.
+    Returns the recorded kwargs of the single migrate() call."""
+    captured = {}
+
+    def _fake_migrate(client, *a, **k):
+        captured["args"] = a
+        captured["kwargs"] = k
+        return types.SimpleNamespace(id="iCLI", environment_id="envCLI")
+
+    monkeypatch.setattr(agent_mod, "migrate", _fake_migrate)
+    monkeypatch.setattr(agent_mod, "ensure_agent", lambda client: None)
+    monkeypatch.setattr(agent_mod.genai, "Client", lambda *a, **k: object())
+    monkeypatch.setattr(sys, "argv", ["agent.py", *argv])
+    agent_mod.main()
+    return captured
+
+
+def test_cli_single_input_routes_to_cobol_path(agent_mod, monkeypatch):
+    """One --input path => migrate(client, cobol_path=<that path>) (single-file default)."""
+    cap = _run_main(agent_mod, monkeypatch, ["--input", "only.cob"])
+    assert cap["kwargs"].get("cobol_path") == "only.cob"
+    assert "cobol_paths" not in cap["kwargs"]
+
+
+def test_cli_multiple_inputs_route_to_cobol_paths(agent_mod, monkeypatch):
+    """Several --input paths => migrate(client, cobol_paths=[...]) (whole-codebase)."""
+    cap = _run_main(agent_mod, monkeypatch, ["--input", "a.cob", "copy.cpy", "b.cob"])
+    assert cap["kwargs"].get("cobol_paths") == ["a.cob", "copy.cpy", "b.cob"]
+    assert "cobol_path" not in cap["kwargs"]
+
+
+def test_cli_default_input_is_single_sample(agent_mod, monkeypatch):
+    """No --input => the default single sample path via cobol_path (unchanged behavior)."""
+    cap = _run_main(agent_mod, monkeypatch, [])
+    assert cap["kwargs"].get("cobol_path") == "src/sample/payroll.cob"
+    assert "cobol_paths" not in cap["kwargs"]
