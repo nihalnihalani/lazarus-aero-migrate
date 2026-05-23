@@ -257,6 +257,89 @@ def test_forge_retry_prompt_instructs_explicit_reread(agent_mod):
 
 
 # --------------------------------------------------------------------------
+# _tool_breadcrumb — live activity breadcrumbs from tool steps (Phase 2)
+# --------------------------------------------------------------------------
+def test_tool_breadcrumb_from_code_execution_call(agent_mod):
+    """A code_execution_call step yields a `$ <command>` breadcrumb (first line, trimmed)."""
+    step = types.SimpleNamespace(
+        type="code_execution_call",
+        arguments=types.SimpleNamespace(code="micromamba install -c conda-forge gnucobol\nmore"),
+    )
+    crumb = agent_mod._tool_breadcrumb(step)
+    assert crumb == "$ micromamba install -c conda-forge gnucobol"
+
+
+def test_tool_breadcrumb_accepts_dict_arguments(agent_mod):
+    """arguments may arrive as a dict (defensive) — still recover the command."""
+    step = types.SimpleNamespace(type="code_execution_call", arguments={"code": "cobc -x payroll.cob"})
+    assert agent_mod._tool_breadcrumb(step) == "$ cobc -x payroll.cob"
+
+
+def test_tool_breadcrumb_result_ok_and_error(agent_mod):
+    ok = types.SimpleNamespace(type="code_execution_result", is_error=False, result="10 passed")
+    assert agent_mod._tool_breadcrumb(ok).startswith("✓ ok")
+    err = types.SimpleNamespace(type="code_execution_result", is_error=True, result="Traceback ...")
+    assert agent_mod._tool_breadcrumb(err).startswith("✗ error")
+
+
+def test_tool_breadcrumb_none_for_non_tool_or_bare_step(agent_mod):
+    """Defensive: a model_output step, an unknown step, or a tool call with no detail -> None
+    (the caller emits nothing — breadcrumbs are a bonus, never required)."""
+    assert agent_mod._tool_breadcrumb(types.SimpleNamespace(type="model_output")) is None
+    assert agent_mod._tool_breadcrumb(types.SimpleNamespace(type="thought")) is None
+    assert agent_mod._tool_breadcrumb(types.SimpleNamespace(type="code_execution_call",
+                                                            arguments=None)) is None
+    assert agent_mod._tool_breadcrumb(None) is None
+
+
+def test_run_interaction_forwards_tool_breadcrumbs_to_ui(agent_mod, monkeypatch):
+    """End-to-end: _run_interaction emits a tool breadcrumb to emit_to_ui when the stream
+    carries a code-execution step (step.start/step.stop), so the live UI shows real activity
+    during silent tool stretches. The breadcrumb is UI-only — it must NOT pollute the
+    accumulated model output that marker/module parsing reads."""
+    captured = []
+    monkeypatch.setattr(agent_mod, "emit_to_ui", captured.append)
+
+    final = types.SimpleNamespace(id="iX", environment_id="envX")
+
+    class _ToolStreamClient:
+        class interactions:
+            get_calls = []
+            @staticmethod
+            def create(**kwargs):
+                yield types.SimpleNamespace(  # the agent runs a compile via code execution
+                    event_type="step.start", interaction_id="iX",
+                    step=types.SimpleNamespace(
+                        type="code_execution_call",
+                        arguments=types.SimpleNamespace(code="cobc -x payroll.cob -o /workspace/bin")),
+                )
+                yield types.SimpleNamespace(  # result of the tool call
+                    event_type="step.stop", interaction_id="iX",
+                    step=types.SimpleNamespace(type="code_execution_result",
+                                               is_error=False, result="(compiled)"),
+                )
+                yield types.SimpleNamespace(  # the model's narrative text
+                    event_type="step.delta", interaction_id="iX",
+                    delta=types.SimpleNamespace(text="Compiled and ran the oracle."),
+                )
+                yield types.SimpleNamespace(
+                    event_type="interaction.completed", interaction=final, interaction_id="iX")
+            @staticmethod
+            def get(interaction_id):
+                _ToolStreamClient.interactions.get_calls.append(interaction_id)
+                return final
+
+    itx = agent_mod._run_interaction(_ToolStreamClient(), input_text="x", environment="remote")
+
+    joined = "".join(captured)
+    assert "$ cobc -x payroll.cob" in joined          # the command breadcrumb reached the UI
+    assert "✓ ok" in joined                            # the result breadcrumb reached the UI
+    assert "Compiled and ran the oracle." in joined    # the model narrative still streamed
+    # The breadcrumbs must NOT be in the accumulated model output (marker/module parsing input)
+    assert "cobc -x" not in agent_mod.extract_output_text(itx)
+
+
+# --------------------------------------------------------------------------
 # extracting results from the verified step shape (NOT .output_text)
 # --------------------------------------------------------------------------
 def test_extract_output_text_reads_model_output_step(agent_mod):

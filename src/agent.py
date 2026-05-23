@@ -212,6 +212,40 @@ def _model_output_text(step) -> str:
     )
 
 
+def _tool_breadcrumb(step) -> str | None:
+    """Human one-liner for a tool step, or None if the step carries no tool detail.
+
+    DEFENSIVE (the agent runtime's exact step shape for tool calls is not fully verified
+    from a dev box): we read the documented Managed-Agents shapes
+    (web/STREAM_CONTRACT.md adapter table) but tolerate anything missing —
+      * code_execution_call   -> `$ <arguments.code>` (the command/code the agent ran),
+      * code_execution_result -> a short status line (`✗ error` / `✓ ok`) + any result text.
+    Returns None when the step isn't a tool step or exposes no usable detail, so the caller
+    simply emits nothing — breadcrumbs are a live-UX bonus, never required. These breadcrumbs
+    feed phase_for_text (server side) so the rail lights recover/translate/oracle/test off
+    real tool activity (`cobc`, `pytest`, `payroll.py`) instead of only end-block prose.
+    """
+    stype = getattr(step, "type", None)
+    if stype == "code_execution_call":
+        args = getattr(step, "arguments", None)
+        code = getattr(args, "code", None) if args is not None else None
+        if not code and isinstance(args, dict):
+            code = args.get("code")
+        if code:
+            first = code.strip().splitlines()[0][:200] if code.strip() else ""
+            return f"$ {first}" if first else None
+        return None
+    if stype == "code_execution_result":
+        is_error = bool(getattr(step, "is_error", False))
+        result = getattr(step, "result", None)
+        snippet = ""
+        if isinstance(result, str) and result.strip():
+            snippet = " " + result.strip().splitlines()[-1][:160]
+        mark = "✗ error" if is_error else "✓ ok"
+        return f"{mark}{snippet}".rstrip() or None
+    return None
+
+
 def extract_output_text(interaction, client: genai.Client | None = None) -> str:
     """Return the agent's terminal model output text.
 
@@ -298,9 +332,18 @@ def _run_interaction(client: genai.Client, *, input_text: str, environment):
             if text:
                 emit_to_ui(text)
                 output_parts.append(text)
-        elif et == "step.stop":
-            # Terminal text of a completed step (verified §8 carries the full Step here).
-            output_parts.append(_model_output_text(getattr(event, "step", None)))
+        elif et in ("step.start", "step.stop"):
+            step = getattr(event, "step", None)
+            # ACTIVITY BREADCRUMB (defensive): if this is a tool step (code execution),
+            # forward a one-line breadcrumb so the live UI shows real activity during the
+            # silent multi-minute tool stretches (conda/compile/pytest) and the phase rail
+            # advances off it. No-op when the step carries no tool detail.
+            crumb = _tool_breadcrumb(step)
+            if crumb:
+                emit_to_ui(crumb + "\n")
+            if et == "step.stop":
+                # Terminal text of a completed step (verified §8 carries the full Step here).
+                output_parts.append(_model_output_text(step))
         elif et == "interaction.completed":
             completed = getattr(event, "interaction", None)
             # env id is still present on the (otherwise-empty) completed interaction.

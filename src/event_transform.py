@@ -25,7 +25,10 @@ _RULE_MARKER = "LAZARUS_RULE:"
 # the UI rail advances DURING the run, not only at the end. Ordered most-specific first;
 # the first pattern that matches a line wins. Phases match web/renderer.js PHASES.
 _PHASE_PATTERNS: list[tuple[str, "re.Pattern[str]"]] = [
-    ("forge", re.compile(r"\.agents/skills/|SKILL\.md|forg(e|ing)\b", re.I)),
+    # forge/forged/forges/forging as a verb, but NOT preceded by a hyphen/word char, so
+    # "conda-forge" (the gnucobol install channel — that's the ORACLE beat) doesn't wrongly
+    # trip the FORGE rail. The .agents/skills/ + SKILL.md paths are unambiguous either way.
+    ("forge", re.compile(r"\.agents/skills/|SKILL\.md|(?<![-\w])forg(e|ed|es|ing)\b", re.I)),
     ("reload", re.compile(r"re-?read|re-?load|reusing (the )?environment", re.I)),
     ("test", re.compile(r"\bpytest\b|equivalence test|byte[\s-]for[\s-]byte|\d+\s+(passed|failed)", re.I)),
     ("oracle", re.compile(r"\bcobc\b|gnucobol|micromamba|differential oracle|golden_io|compil", re.I)),
