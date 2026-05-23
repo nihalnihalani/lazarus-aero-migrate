@@ -258,9 +258,14 @@ _GROUNDING_PREAMBLE = (
     "google_search tool for the idiom (e.g. \"COBOL ROUNDED rounding mode\", "
     "\"COBOL PIC 9V99 DISPLAY de-editing\") and the url_context tool to read the most "
     "authoritative source you find (IBM Enterprise COBOL language reference, GnuCOBOL "
-    "docs, ISO COBOL standard). Cite each finding inline as `SOURCE: <url> — <one-line "
-    "fact>` BEFORE you write the skill, and base the forged .agents/skills/<idiom>/SKILL.md "
-    "on those cited findings. Grounded research precedes the forge, never replaces the "
+    "docs, ISO COBOL standard).\n"
+    "CITATIONS ARE REQUIRED AND EXPLICIT. For EVERY source you consult, print a line on "
+    "its OWN line, as plain output text (NOT inside a code cell), with the EXACT prefix "
+    "`SOURCE: ` — i.e. `SOURCE: <url> — <one-line fact you took from it>`. Emit at least "
+    "one SOURCE: line per idiom you research, BEFORE you write the skill, and base the "
+    "forged .agents/skills/<idiom>/SKILL.md on those cited findings. If you searched but "
+    "took nothing usable from a page, still record `SOURCE: <url> — (not useful)` so the "
+    "research trail is honest. Grounded research precedes the forge, never replaces the "
     "byte-for-byte differential oracle.\n\n"
 )
 
@@ -542,8 +547,9 @@ def _thought_tokens(interaction) -> int | None:
     """usage.total_thought_tokens off a (completed) interaction, or None if absent.
 
     The data model exposes usage.total_thought_tokens (gemini-interactions-api skill); we
-    read it best-effort (attr OR dict) so a positive value PROVES thinking ran, and a
-    missing field never errors.
+    read it best-effort (attr OR dict). A positive value is evidence the agent THOUGHT — but
+    NOT evidence the requested thinking_level applied (qa live: the count does not track the
+    requested depth; the runtime accepts the param but ignores it). A missing field never errors.
     """
     usage = getattr(interaction, "usage", None)
     if usage is None and isinstance(interaction, dict):
@@ -690,7 +696,7 @@ def _looks_like_thinking_rejection(exc: Exception) -> bool:
 
 
 def _thinking_agent_config(level: str) -> dict:
-    """The agent-path thinking config the SDK actually accepts (Feature 2).
+    """The DOCUMENTED agent-path thinking config shape (Feature 2).
 
     SOURCE OF TRUTH = the installed SDK types (google.genai._interactions.types), NOT the
     generate_content shape:
@@ -703,18 +709,29 @@ def _thinking_agent_config(level: str) -> dict:
         ['minimal','low','medium','high'] matching our env values directly.
       * DynamicAgentConfigParam requires {"type": "dynamic"} and allows extra items
         (TypedDict total=False, extra_items=object), so the flat thinking_level rides on it.
+
+    HONESTY (qa LIVE FINDING, merge-blocking): the managed-agent runtime ACCEPTS this shape
+    (no 400) but does NOT honor the requested depth — qa measured thought-token counts that do
+    NOT track the level (high ≈ minimal, often FEWER). Thinking runs at the runtime default
+    regardless. So we send the documented param as an honest "we tried the documented knob,"
+    but the trace must NEVER imply the level took effect. See _create_interaction_stream.
     """
     return {"type": "dynamic", "thinking_level": level}
 
 
 def _create_interaction_stream(client: genai.Client, *, input_text: str, environment):
-    """interactions.create(stream=True), optionally with an interaction-scoped thinking
-    level (Feature 2). DEFAULT (LAZARUS_THINKING unset / medium): sends NO agent_config —
-    byte-identical to the shipped call. When a non-default level IS configured we attach the
-    SDK-correct agent-path shape agent_config={"type":"dynamic","thinking_level": <lvl>}
-    (flat thinking_level, NOT generation_config — see _thinking_agent_config). If the agent
-    runtime rejects it (graceful no-op — qa proved it does, 400), we set THINKING_REJECTED
-    and retry WITHOUT it so the run still completes. Returns the stream iterator.
+    """interactions.create(stream=True), optionally with the DOCUMENTED interaction-scoped
+    thinking level (Feature 2). DEFAULT (LAZARUS_THINKING unset / medium): sends NO
+    agent_config — byte-identical to the shipped call.
+
+    When a non-default level IS configured we attach the SDK-correct, documented agent-path
+    shape agent_config={"type":"dynamic","thinking_level": <lvl>} (flat thinking_level, NOT
+    generation_config — see _thinking_agent_config). HONEST OUTCOME (qa live): the runtime
+    ACCEPTS the param but does NOT honor depth — thinking runs at the default and thought-token
+    counts don't track the level. So the trace line states exactly that and implies ZERO
+    control. The rejection branch below is a DEFENSIVE fallback only: the shipped shape is
+    accepted (no 400), so it is NOT the observed live behavior — kept in case a future runtime
+    starts rejecting the param. Returns the stream iterator.
     """
     base_kwargs = dict(
         agent=AGENT_ID,
@@ -726,21 +743,28 @@ def _create_interaction_stream(client: genai.Client, *, input_text: str, environ
     if level is None:
         return client.interactions.create(**base_kwargs)
 
-    # Opt-in: request the thinking level via the agent-path agent_config (flat thinking_level).
+    # Opt-in: send the DOCUMENTED agent-path thinking param (flat thinking_level on agent_config).
     thinking_kwargs = dict(base_kwargs)
     thinking_kwargs["agent_config"] = _thinking_agent_config(level)
     try:
         stream = client.interactions.create(**thinking_kwargs)
-        emit_to_ui(f"[thinking_level={level}]\n")
+        # HONEST label (qa live: param accepted but depth NOT honored). Never imply control.
+        emit_to_ui(
+            f"[requested thinking_level={level} — the agent runtime ACCEPTS the param but "
+            "does NOT honor depth: thinking runs at the default and thought-token counts "
+            "don't track the level]\n"
+        )
         return stream
     except Exception as exc:
         if not _looks_like_thinking_rejection(exc):
             raise  # an unrelated failure — don't swallow it behind the thinking flag
+        # DEFENSIVE fallback (NOT observed live: the shipped shape is accepted, no 400). If a
+        # future runtime DOES reject the documented param, degrade gracefully + flag it.
         global THINKING_REJECTED
         THINKING_REJECTED = True
         emit_to_ui(
             "[thinking_level rejected by the managed-agent runtime — proceeding without it "
-            f"(requested {level})]\n"
+            f"(requested {level}; defensive path, not the live-observed behavior)]\n"
         )
         return client.interactions.create(**base_kwargs)
 
@@ -792,11 +816,15 @@ def _run_interaction(client: genai.Client, *, input_text: str, environment):
             # env id is still present on the (otherwise-empty) completed interaction.
             env_id = extract_environment_id(completed) or env_id
             interaction_id = getattr(completed, "id", None) or interaction_id
-            # Surface thinking token usage (Feature 2) if the runtime reports it — proves
-            # the thinking config actually took effect. No-op when usage/field is absent.
+            # Surface thinking token usage (Feature 2) if the runtime reports it. HONEST framing
+            # (qa live): this is evidence the agent THOUGHT, NOT that our requested level applied
+            # — the count does not track the requested depth. No-op when usage/field is absent.
             tok = _thought_tokens(completed)
             if tok:
-                emit_to_ui(f"[thought_tokens={tok}]\n")
+                emit_to_ui(
+                    f"[thought_tokens={tok} — evidence the agent thought; NOT evidence the "
+                    "requested thinking_level applied (counts don't track the level)]\n"
+                )
 
     # Authoritative final fetch: the completed event's payload is empty, so re-fetch the
     # full interaction object when we can. Fall back to the completed event if get() fails.
