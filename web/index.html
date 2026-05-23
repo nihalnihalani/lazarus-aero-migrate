@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LAZARUS · Autonomous Legacy Modernization</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Major+Mono+Display&family=IBM+Plex+Mono:wght@400;500;600;700&family=Archivo:wght@600;700;800;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <!-- ambient layers -->
+  <div class="grain" aria-hidden="true"></div>
+  <div class="scanlines" aria-hidden="true"></div>
+  <div class="vignette" aria-hidden="true"></div>
+
+  <!-- ── masthead ─────────────────────────────────────────────── -->
+  <header class="masthead">
+    <div class="brand">
+      <span class="brand-mark">⚯</span>
+      <h1 class="brand-name">LAZARUS</h1>
+      <span class="brand-sub">aero-migrate</span>
+    </div>
+    <div class="tagline">raising&nbsp;dead&nbsp;code&nbsp;back&nbsp;to&nbsp;life</div>
+    <div class="masthead-meta">
+      <span class="meta-pill"><em>model</em> <b id="meta-agent">antigravity-preview</b></span>
+      <span class="meta-pill"><em>module</em> <b id="meta-module">—</b></span>
+      <span class="meta-pill iter"><em>iter</em> <b><span id="iter-counter">0</span>/<span id="iter-cap">4</span></b></span>
+      <span class="verdict-badge" id="verdict-badge"></span>
+    </div>
+  </header>
+
+  <!-- ── phase rail ───────────────────────────────────────────── -->
+  <nav class="phase-rail" id="phase-rail" aria-label="migration phases"></nav>
+
+  <main id="stage" class="stage" data-phase="">
+    <!-- ── intake column ─────────────────────────────────────── -->
+    <section class="intake">
+      <div class="dropzone" id="dropzone">
+        <input type="file" id="file-input" accept=".cob,.cbl,.cpy,.txt" hidden />
+        <div class="drop-glyph">↧</div>
+        <div class="drop-head">DROP A COBOL MODULE</div>
+        <div class="drop-hint">.cob / .cbl — or</div>
+        <button class="preload-btn" id="preload-btn" type="button">load golden sample · payroll.cob</button>
+        <div class="drop-name" id="drop-name"></div>
+      </div>
+      <pre class="drop-preview" id="drop-preview"></pre>
+
+      <!-- oracle money-shot banner -->
+      <div class="oracle-banner" id="oracle-banner"></div>
+
+      <!-- (c) business rules / archaeology -->
+      <div class="panel panel-rules">
+        <div class="panel-head">
+          <span class="panel-tab">BUSINESS&nbsp;RULES</span>
+          <span class="panel-note">recovered institutional knowledge · <span id="rules-count">0</span></span>
+        </div>
+        <div class="rules-list" id="rules-list"></div>
+      </div>
+    </section>
+
+    <!-- ── trace column (b) ──────────────────────────────────── -->
+    <section class="panel panel-trace">
+      <div class="panel-head">
+        <span class="panel-tab live">AGENT&nbsp;WORKING</span>
+        <span class="panel-note">interaction.steps · live trace</span>
+      </div>
+      <div class="trace-stream" id="trace-stream"></div>
+    </section>
+
+    <!-- ── proof column ──────────────────────────────────────── -->
+    <section class="proof">
+      <!-- (d) diff viewer -->
+      <div class="panel panel-diff">
+        <div class="panel-head">
+          <span class="panel-tab">COBOL ⇄ PYTHON</span>
+          <span class="panel-note">side-by-side translation</span>
+        </div>
+        <div class="diff-grid">
+          <div class="diff-pane">
+            <div class="diff-name" id="diff-left-name">—</div>
+            <div class="code-block" id="diff-left"></div>
+          </div>
+          <div class="diff-pane">
+            <div class="diff-name" id="diff-right-name">—</div>
+            <div class="code-block" id="diff-right"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- (e) pytest terminal -->
+      <div class="panel panel-term">
+        <div class="panel-head">
+          <span class="panel-tab">EQUIVALENCE&nbsp;TESTS</span>
+          <span class="term-verdict" id="pytest-verdict"></span>
+        </div>
+        <div class="term-body" id="pytest-body"></div>
+      </div>
+
+      <!-- (f) forge / git-diff -->
+      <div class="panel panel-forge">
+        <div class="panel-head">
+          <span class="panel-tab forge-tab">FORGE · SELF-AUTHORED SKILL</span>
+          <span class="panel-note" id="forge-reason"></span>
+        </div>
+        <div class="forge-body" id="forge-body"></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ── transport bar ────────────────────────────────────────── -->
+  <footer class="transport">
+    <div class="transport-left">
+      <button class="t-btn play" id="play-btn" data-playing="false" title="play / pause (space)">
+        <span class="ic-play">▶</span><span class="ic-pause">❚❚</span>
+      </button>
+      <button class="t-btn" id="restart-btn" title="restart (r)">↺</button>
+      <button class="t-btn" id="skip-btn" title="skip to end (f)">⇥</button>
+      <div class="scrub"><div class="scrub-fill" id="scrub-fill"></div></div>
+      <span class="clock" id="clock">0.0s / 0.0s</span>
+    </div>
+    <div class="transport-right">
+      <div class="speeds">
+        <button class="speed-btn" data-speed="0.5">0.5×</button>
+        <button class="speed-btn active" data-speed="1">1×</button>
+        <button class="speed-btn" data-speed="2">2×</button>
+        <button class="speed-btn" data-speed="4">4×</button>
+      </div>
+      <span class="status" id="meta-status">booting…</span>
+      <button class="download-btn" id="download-btn" disabled>
+        <span class="dl-ic">⤓</span> DOWNLOAD MIGRATED MODULE
+      </button>
+    </div>
+  </footer>
+
+  <script type="module" src="./src/app.js"></script>
+</body>
+</html>
