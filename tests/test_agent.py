@@ -235,14 +235,22 @@ def test_build_prompt_names_true_idiom_not_comp3(agent_mod):
     assert "not the comp-3" in low or "not comp-3" in low
 
 
+def test_build_prompt_requests_machine_readable_markers(agent_mod):
+    """The UI's structured panels need machine-readable data, so the prompt must ask the
+    agent to print the LAZARUS_ORACLE_JSON + LAZARUS_RULE marker lines."""
+    prompt = agent_mod._build_prompt("IDENTIFICATION DIVISION.")
+    assert "LAZARUS_ORACLE_JSON" in prompt
+    assert "LAZARUS_RULE" in prompt
+
+
 def test_forge_retry_prompt_instructs_explicit_reread(agent_mod):
     """The SAFE FORGE pattern: the retry prompt MUST explicitly tell the agent to
     re-read .agents/skills/ (do not rely on silent mid-run auto-reload)."""
-    prompt = agent_mod._build_forge_retry_prompt(".agents/skills/comp-3/SKILL.md")
+    prompt = agent_mod._build_forge_retry_prompt(".agents/skills/numeric-display-rounding/SKILL.md")
     low = prompt.lower()
     assert ".agents/skills/" in prompt
     assert "re-read" in low or "read" in low
-    assert "comp-3" in low
+    assert "numeric-display-rounding" in low
 
 
 # --------------------------------------------------------------------------
@@ -295,7 +303,7 @@ def test_extract_output_text_when_completed_event_is_empty(agent_mod, tmp_path):
     client = FakeClient([
         # turn 1: RED + forge; text ONLY in streamed deltas, completed event is empty
         {"env_id": "env1", "interaction_id": "i1", "empty_completed": True,
-         "model_text": "FAILED unknown idiom. FORGED .agents/skills/numeric-display/SKILL.md"},
+         "model_text": "FAILED unknown idiom. FORGED .agents/skills/numeric-display-rounding/SKILL.md"},
         {"env_id": "env1", "interaction_id": "i2", "empty_completed": True,
          "model_text": "All tests pass. equivalent to original COBOL."},
     ])
@@ -329,8 +337,8 @@ def test_migrate_forges_then_retries_reusing_environment(agent_mod, tmp_path):
     client = FakeClient([
         # turn 1: RED — unknown idiom, agent forged a SKILL.md
         {"env_id": "env1", "interaction_id": "i1",
-         "model_text": "FAILED: unknown idiom COMP-3. "
-                       "FORGED .agents/skills/comp-3/SKILL.md"},
+         "model_text": "FAILED: unknown idiom numeric DISPLAY format + ROUND-HALF-UP. "
+                       "FORGED .agents/skills/numeric-display-rounding/SKILL.md"},
         # turn 2: GREEN after re-reading the forged skill
         {"env_id": "env1", "interaction_id": "i2",
          "model_text": "All tests pass. 3/3 equivalent to original COBOL."},
@@ -357,7 +365,7 @@ def test_migrate_recovers_output_from_stream_when_terminal_has_no_steps(agent_mo
     client = FakeClient([
         # turn 1: RED + forge — but the model_output is ONLY in the stream (no .steps)
         {"env_id": "env1", "interaction_id": "i1", "steps_only": True,
-         "model_text": "FAILED unknown idiom. FORGED .agents/skills/comp-3/SKILL.md"},
+         "model_text": "FAILED unknown idiom. FORGED .agents/skills/numeric-display-rounding/SKILL.md"},
         # turn 2: GREEN
         {"env_id": "env1", "interaction_id": "i2", "steps_only": True,
          "model_text": "All tests pass. equivalent to original COBOL."},

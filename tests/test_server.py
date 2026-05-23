@@ -137,3 +137,43 @@ def test_post_then_stream_emits_canonical_events(monkeypatch):
     assert "forge" in seen     # forged-skill detected from agent output
     assert "pytest" in seen    # RED/GREEN verdict
     assert "done" in seen      # terminal verdict
+
+
+def test_stream_emits_structured_pytest_and_oracle(monkeypatch):
+    """The #1 money shot: server derives a STRUCTURED pytest event (per-case
+    cobol-vs-python) + an oracle banner from the agent's LAZARUS_ORACLE_JSON marker."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-real")
+    monkeypatch.setattr(agent_mod.genai, "Client", lambda *a, **k: object())
+    monkeypatch.setattr(agent_mod, "ensure_agent", lambda client: None)
+    monkeypatch.setattr(agent_mod, "migrate", lambda client, path: SimpleNamespace())
+    agent_output = (
+        'LAZARUS_RULE: {"title": "Progressive tax", "plain": "22.5% withheld", "severity": "rule"}\n'
+        'LAZARUS_ORACLE_JSON: [{"input": "1.00\\n", "cobol": "0000000.77\\n", '
+        '"python": "0000000.78\\n", "match": false}, '
+        '{"input": "1000.00\\n", "cobol": "0000775.00\\n", "python": "0000775.00\\n", "match": true}]\n'
+        "1 failed, 1 passed"
+    )
+    monkeypatch.setattr(agent_mod, "extract_output_text", lambda r: agent_output)
+    monkeypatch.setattr(agent_mod, "extract_environment_id", lambda r: "env-xyz")
+
+    client = TestClient(server.app)
+    run_id = client.post("/api/migrate", json={"cobol": "X", "filename": "p.cob"}).json()["run_id"]
+
+    events = []
+    with client.stream("GET", f"/api/stream/{run_id}") as resp:
+        for line in resp.iter_lines():
+            s = line.decode() if isinstance(line, (bytes, bytearray)) else line
+            if s and s.startswith("data:"):
+                ev = json.loads(s[len("data:"):].strip())
+                events.append(ev)
+                if ev.get("type") in ("done", "error"):
+                    break
+
+    by_type = {e["type"]: e for e in events}
+    assert "oracle" in by_type and "GnuCOBOL" in by_type["oracle"]["compiler"]
+    assert "business_rule" in by_type
+    pt = by_type["pytest"]
+    assert pt["result"] == "red"
+    assert len(pt["cases"]) == 2
+    fail = next(c for c in pt["cases"] if c["status"] == "fail")
+    assert fail["cobol"] == "0000000.77\n" and fail["python"] == "0000000.78\n"  # the diff!
