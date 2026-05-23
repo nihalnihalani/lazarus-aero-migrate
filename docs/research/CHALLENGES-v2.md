@@ -1286,3 +1286,21 @@ probes (frontend's earlier comment; qa's early "400 every shape") were on 1.73.1
 [[sdk-version-provenance-gap]]. Do NOT lower the pin or re-verify on 1.73.1. **L29 resolved: shipped path verified
 on the pinned SDK. The standing gate rule (qa stamp 2.6.x on LIVE receipts) is now ONLY about confirming qa's LIVE
 runs used .venv — the unit tests + my static checks are confirmed on 2.6.0.**
+
+## matcher-breadth (L30 follow-on) — HARDENED + verified (8b0b574, DA opt-a)
+integration-eng took my option (a): _looks_like_thinking_rejection now matches ONLY config-field tokens
+(thinking_level/thinking_config/agent_config/generation_config), dropping the generic phrases ("invalid
+argument"/"not supported"/"unexpected"/"unknown parameter" alone). I verified the narrowing on 2.6.0:
+- REAL errors STILL caught (defensive path intact if the runtime ever rejects): "use agent_config",
+  "Unknown parameter 'generation_config'", "agent_config.thinking_level" → all True.
+- UNRELATED errors now correctly NOT swallowed: "503", "deadline exceeded", "invalid argument:
+  temperature out of range", "rate limit exceeded" → all False.
+So the transient-error-masking risk I flagged is GONE, and the branch (dead on the shipped accepted path) can
+no longer hide a real error if it ever fires. Optional item CLOSED. 154 green. This was the last open
+code-quality note on Feature 2; nothing further on the code side.
+
+## CODE-SIDE GATE: FULLY CLOSED. Only qa's 4 version-stamped (.venv/2.6.x) LIVE receipts remain for full sign-off.
+Every code/honesty/regression item I raised (L16-L30 incl. the optional matcher hardening) is fixed + verified
+on the pinned SDK. The verdict/oracle/falsifiability core is untouched. The merge gate is now PURELY:
+(1) #1 grounding_tool_count>0 line, (2) #3 banked SKILL.md on a forge, (3) #4 PAYMAIN→TAXSUB rule + golden,
+(4) #2 thinking token stamp — each produced via .venv/2.6.x. I sign off the moment those land.
