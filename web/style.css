@@ -21,8 +21,8 @@
 
   --mono:    'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
   --display: 'Archivo', system-ui, -apple-system, sans-serif;
-  /* wordmark is a clean, heavy display face — legible, obviously "LAZARUS" */
-  --wordmark:'Archivo', system-ui, sans-serif;
+  /* wordmark is the stylized geometric-mono display face */
+  --wordmark:'Major Mono Display', var(--mono);
 
   --radius: 16px;
   --radius-sm: 10px;
@@ -55,11 +55,11 @@ b { color: var(--text); font-weight: 600; }
   flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between;
   gap: 14px; padding: 15px clamp(18px, 4vw, 48px); border-bottom: 1px solid var(--line);
 }
-.brand { display: flex; align-items: center; gap: 10px; }
-.brand-mark { color: var(--accent); font-size: 18px; line-height: 1; }
+.brand { display: flex; align-items: baseline; gap: 9px; }
+.brand-mark { color: var(--accent); font-size: 18px; }
 .brand-name {
-  font-family: var(--wordmark); font-weight: 800; font-size: 18px;
-  letter-spacing: 4px; color: #eafff5; text-transform: uppercase;
+  font-family: var(--wordmark); font-size: 17px;
+  letter-spacing: 1px; color: #eafff5;
 }
 .topbar-meta { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
 .chip { display: inline-flex; align-items: baseline; gap: 6px; padding: 4px 11px; border: 1px solid var(--line); border-radius: 99px; background: var(--surface); font-size: 11.5px; }
