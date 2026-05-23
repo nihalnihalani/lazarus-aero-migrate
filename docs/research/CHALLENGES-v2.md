@@ -804,3 +804,101 @@ agent tools per §3).
   (it's a real field on `Usage` and is independent of breadcrumb parsing). Until both the fix lands AND
   qa shows real google_search_call/url_context_call blocks + grounding_tool_count on a live key,
   web-grounding stays **HOLD** (NOT the "completed" the task board shows — task #5 reopened to me).
+
+## L18 — THINKING_LEVEL (Feature 2): flag-off SAFE, but it sends the WRONG generation_config SHAPE → the rejection path would FALSELY blame the runtime — NEEDS FIX
+
+- **Flag-OFF regression: CLEAN.** `_thinking_level()` returns None for unset AND for "medium"/
+  sentinels; `_create_interaction_stream` then calls `interactions.create(**base_kwargs)` with the
+  EXACT shipped kwargs (agent, input, stream, extra_body) — NO generation_config. The new tests
+  (test_thinking_unset_sends_no_generation_config / _sentinel_values) lock this. No regression.
+  Honest design touches: graceful-reject → retry-without + THINKING_REJECTED flag + UI line;
+  `[thought_tokens=N]` only when usage reports it; unrelated errors re-raised (not swallowed).
+- **Attack:** is the generation_config SHAPE the one the INTERACTIONS api accepts? I checked the
+  team's OWN research + the installed SDK.
+- **EVIDENCE (two independent sources agree, and the impl contradicts BOTH):**
+  - Impl sends `generation_config={"thinking_config": {"thinking_level": level}}` (NESTED).
+  - RESEARCH_GEMINI_3.5.md §6.1 + findings-gemini.md:112 (verbatim from the live interactions
+    thinking docs): the Interactions API shape is FLAT — `generation_config={"thinking_level": "low"}`.
+    The NESTED `thinking_config=ThinkingConfig(...)` form is the **generate_content** typed-config
+    path (`config=types.GenerateContentConfig(thinking_config=...)`) — a DIFFERENT API surface.
+  - Installed SDK `google.genai._interactions.types.generation_config_param.GenerationConfigParam`:
+    `thinking_level` is a FLAT key; there is NO `thinking_config` key anywhere in the interactions
+    types (`grep -rln thinking_config` over that dir = none). `ThinkingConfig` lives in
+    `google/genai/types.py` (the models path), not interactions.
+  - So the impl copied the generate_content nesting into the interactions generation_config. The
+    agent will receive an unrecognized `thinking_config` key (or silently ignore the nested object).
+- **WHY THIS IS WORSE THAN A TYPO — it corrupts the feature's honesty verdict:** if the malformed
+  config triggers an "unknown field"/"invalid argument" error, `_looks_like_thinking_rejection`
+  MATCHES it (it keys on exactly those words) → sets `THINKING_REJECTED=True` → emits "thinking_level
+  rejected by the managed-agent runtime." The team would then record thinking as NOT-WORKING / "the
+  runtime doesn't support it" — when the REAL cause is *we sent it wrong and never tested the correct
+  flat call.* That's a FALSE provenance: it could (a) wrongly bury a feature that actually works, or
+  (b) let us claim "we gracefully handle the runtime's rejection" without ever having made a
+  well-formed request. Either way the eventual VERIFIED/NOT-WORKING call would be unfounded.
+- **The tests CODIFY the bug:** test_thinking_explicit_level_carries_exact_shape (line 334) asserts
+  `cfg == {"thinking_config": {"thinking_level": level}}` — green because it tests the impl against
+  the same wrong shape. Pure L16-trap closed loop; proves nothing about runtime acceptance.
+- **Verdict: NEEDS FIX before ANY thinking verdict is meaningful.** (1) Send the FLAT interactions
+  shape `generation_config={"thinking_level": level}` (per the team's own §6.1 + the SDK type). (2)
+  Fix the test to assert the flat shape. (3) THEN the live run is decisive: minimal→high must change
+  `usage.total_thought_tokens` AND emit `thought` blocks (accepted), OR a CLEAN flat call gets a
+  genuine rejection (then NOT-WORKING is REAL, not an artifact of malformed input). Until the flat
+  call is what we send, thinking_level = **HOLD** and the THINKING_REJECTED signal is untrustworthy.
+  Task #6 should NOT be "completed."
+
+## L19 — CROSS-RUN SKILL LIBRARY (Feature 3): orchestration is HONEST + CORRECT (I drove it); live verdict hinges on agent ECHO + STARTUP-READ
+
+- **Flag-OFF regression: CLEAN.** With an EMPTY `.agents/skills/` (the shipped world) and no recorded
+  fingerprint, `ensure_agent` returns a no-op (existing agent → 0 create / 0 delete; I drove it).
+  `build_base_environment` mounts only AGENTS.md → base_environment byte-identical to main.
+  `_bank_forged_skill_from_output` is only called on a FAILED iteration AFTER a skill path is detected
+  (it can't run on the shipped happy path). `.skill_fingerprint` is gitignored (verified). No regression.
+- **Honesty of the mechanism: STRONG — it is exactly the RESEARCH §4 verified-safe pattern, not an
+  overclaim.** §4 is explicit: fresh runs fork CLEAN; to make a forged skill durable you re-register
+  the agent with the SKILL.md mounted in `base_environment`. Feature 3 does precisely that: bank the
+  echoed SKILL.md to `.agents/skills/<slug>/` → `ensure_agent` mounts every on-disk SKILL.md into
+  base_environment AND a changed mounted-skill fingerprint forces a delete+recreate so a FRESH
+  invocation inherits it. It does NOT claim silent mid-run hot-reload or "persists forever" (the C16/
+  §4 overclaim I'd block). Banking returns None if the agent never echoed the body ("we never invent
+  skill content") — honest.
+- **EVIDENCE — I drove the FULL cross-run flow myself (deterministic, no key):** simulated a run-A
+  output that announces + echoes `.agents/skills/sign-overpunch/SKILL.md` → `_bank_forged_skill_from_output`
+  wrote the real body to disk → a FRESH `ensure_agent` (agent pre-existing, OLD fingerprint) DELETED +
+  RECREATED the agent, and the new base_environment mounted `.agents/skills/sign-overpunch/SKILL.md`
+  with the banked body verbatim. The orchestration that turns a forge into a cross-run skill is correct.
+- **THE TWO LIVE-ONLY GAPS (qa must prove; this is why #3 is HOLD not VERIFIED):**
+  1. Does the live agent ECHO the forged SKILL.md body in its output text? Banking depends on the body
+     appearing in a fenced block after the path mention. If the agent only writes it to sandbox disk and
+     doesn't echo it, `_bank_forged_skill_from_output` returns None → NOTHING is banked → no cross-run
+     skill. (The Files-API tarball is NOT used here, so disk-only writes are not recovered.)
+  2. Does a GENUINELY FRESH invocation (new environment) actually READ + USE the mounted skill on
+     startup? A skill surviving in the SAME reused env is the already-shipped FORGE-retry beat, NOT a new
+     cross-run capability. I require: run A banks; a SEPARATE fresh run discovers the banked skill from
+     `.agents/skills/` at startup (visible in its recovered-rules / approach).
+- **Verdict: HOLD — code/orchestration VERIFIED honest by my own drive; awaiting qa's two live proofs
+  (agent echoes body → banked file on disk; fresh run picks it up). NOT an overclaim in code.**
+
+## L20 — WHOLE-CODEBASE MULTI-MODULE (Feature 4): flag-off CLEAN, multi-prompt is genuinely cross-module; live verdict = a real cross-module rule
+
+- **Flag-OFF / single-file regression: CLEAN.** `migrate(client, "one.cob")` → `_normalize_cobol_paths`
+  returns a 1-element list → `len(paths)==1` → uses `_build_prompt` (the byte-identical shipped prompt).
+  I verified the single-file (len-1) prompt == `_build_prompt(...)` exactly. The multi path
+  (`_build_multi_prompt`) is reached ONLY when `migrate` gets >1 file. `cobol_path` stays the first
+  positional arg (backward-compatible signature). No regression.
+- **Is it a REAL cross-module capability or just concatenation?** The multi-prompt (verified by reading
+  the rendered text): presents all modules at once, instructs "Treat the files as ONE system," and
+  asks for rules that SPAN modules — shared COPY record layouts, a computation split across a caller +
+  its CALLed subprogram, constants/88-levels defined in one module used by another, lifecycle ordering.
+  It reuses the same LAZARUS_RULE/ORACLE_JSON/MODULE markers so the UI panels work unchanged, and writes
+  the entrypoint to /workspace/payroll.py (download/diff intact). So the PROMPT genuinely solicits
+  cross-module analysis — not a concatenation hack. Honest framing.
+- **THE LIVE GAP (qa must prove):** a LAZARUS_RULE the agent could ONLY produce by reading 2+ files
+  together (e.g. "TAXRATE constant defined in copybook X is applied in module Y"), not three independent
+  single-file rules. Requires a 2+-module sample where a genuine cross-module dependency exists. NOTE:
+  golden_io.json is single-module (payroll) ground truth — a multi-module run's ORACLE/equivalence
+  proof is only as strong as the golden it diffs against; if the codebase entrypoint still maps to the
+  payroll battery, the oracle stays honest, but a NEW multi-module sample would need its own real-cobc
+  golden to prove equivalence (don't claim byte-equivalence for modules with no golden). qa should
+  state which golden the multi-run was proven against.
+- **Verdict: HOLD — code/prompt VERIFIED genuinely cross-module + regression-clean; awaiting qa's one
+  live proof (a real cross-module rule from a 2+-file run, + which golden the oracle used).**
