@@ -101,6 +101,9 @@ def to_pytest_event(records: list[dict], iteration: int = 1) -> dict:
         "iteration": iteration,
         "summary": summary,
         "cases": cases,
+        "source": "agent_pytest",  # the agent's OWN per-case oracle (LAZARUS_ORACLE_JSON);
+                                    # oracle_harness_pytest_event() overrides this for the
+                                    # orchestrator's local differential-oracle run.
     }
 
 

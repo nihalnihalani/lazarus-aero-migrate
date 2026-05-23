@@ -76,6 +76,14 @@ def test_to_pytest_event_green_when_all_match():
     assert all(c["status"] == "pass" for c in ev["cases"])
 
 
+def test_to_pytest_event_labels_agent_source():
+    """The agent's own per-case oracle (from LAZARUS_ORACLE_JSON) is labeled
+    source='agent_pytest', so the UI distinguishes it from the orchestrator's harness."""
+    records = [{"input": "1000.00\n", "cobol": "0000775.00\n",
+                "python": "0000775.00\n", "match": True}]
+    assert et.to_pytest_event(records)["source"] == "agent_pytest"
+
+
 # --------------------------------------------------------------------------
 # oracle_event — the differential-oracle banner (real compiler + inputs)
 # --------------------------------------------------------------------------
