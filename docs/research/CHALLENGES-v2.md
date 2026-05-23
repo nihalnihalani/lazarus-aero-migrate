@@ -959,3 +959,24 @@ agent tools per §3).
   bank→re-register→mount (L19), the cross-run MECHANISM is verified end-to-end. Residual live gap stays:
   on a real forge run, does the agent ECHO the SKILL.md body so banking captures it (else nothing banks)?
   qa to show the banked file on disk from a forge run.
+
+## L23 — WHOLE-CODEBASE (#4) is LIBRARY-ONLY: no server / CLI / UI entry point — a scope-honesty boundary
+
+- **Finding:** Feature 4's multi-module path (`migrate(client, cobol_paths=[...])` → `_build_multi_prompt`)
+  is reachable ONLY via a direct Python call. NONE of the shipped surfaces invoke it:
+  - `server.py:340` calls `agent_mod.migrate(client, tmp_path)` — single file; `/api/migrate` accepts
+    `{cobol, filename}` (ONE cobol string, server.py:11).
+  - `web/` (recursive grep) has NO multi-file upload/select path — no `cobol_paths`/multiple/codebase ref.
+  - CLI `main()` has a single `--input` with NO `nargs`, then `migrate(client, args.input)` — can't pass
+    >1 file even from the command line.
+- **Contrast with the other 3 (which ARE reachable):** #1 grounding (env `LAZARUS_GROUND`, read in
+  migrate, server path), #2 thinking (env `LAZARUS_THINKING`, server path), #3 banking (automatic in the
+  migrate loop, server path). #4 alone has no flag and no entry point — it's a bare function signature.
+- **Verdict: NOT an overclaim IN CODE (the function + cross-module prompt are honest and tested), BUT it
+  WOULD be an overclaim to present "LAZARUS migrates a whole codebase" as a usable PRODUCT capability —
+  no shipped surface can run it.** Two honest options before claiming #4 anywhere user-facing:
+  (a) WIRE an entry point (CLI `--input` with `nargs="+"`, or a multi-file UI/endpoint), then qa runs it
+  end-to-end; OR (b) label #4 explicitly as a library/API capability ("the migrate() API accepts a module
+  set; the demo UI drives single-file") and DON'T show it as a clicked-in-the-UI feature. Either is fine;
+  silently demoing it as a product feature is not. Flagged to team-lead. This does NOT affect the
+  regression gate (single-file path is byte-identical) and #4's code stays VERIFIED-as-a-function.
