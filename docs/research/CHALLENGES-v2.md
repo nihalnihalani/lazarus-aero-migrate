@@ -1097,6 +1097,20 @@ reword — flagged to team-lead).
     "explicitly not used" claim → STOP, escalate, fix the claim.
 - **Until I see the names: provisional read = internal routing (consistent), but UNCONFIRMED.**
 
+### L26 — LOAD-BEARING HALF CONFIRMED BY ME (independent of seeing the names): LAZARUS registers ZERO user functions
+I verified our code never passes `tools=` / `functions=` / `function_declarations` to `agents.create` OR
+`interactions.create` (grep clean; ensure_agent omits tools → defaults to code_execution+google_search+
+url_context). Therefore ANY function_call block that fired live CANNOT be user-registered function-calling —
+it is necessarily the RUNTIME's OWN internal tool envelope. So the honesty-load-bearing claim — "LAZARUS does
+NOT use user-facing function calling; RESEARCH §3 'function_calling not supported/used' stays accurate" — is
+TRUE regardless of what the internal tool names are. The specific names (qa to paste) only refine an optional
+doc line. ALSO: integration-eng added an honest function_call/function_result breadcrumb (working tree, cites
+this L26) that SURFACES the tool name in the trace ("🛠 <name> <args>") so the names are auditable live — good
+instrumentation, regression-safe (display-only, flags-off kwargs unchanged, 149 green).
+**L26 VERDICT: the function_call blocks do NOT contradict §3 — our claim holds (we register no functions; the
+envelope is the runtime's internal routing). Optional doc line + qa's name list would make it airtight, but
+the claim is already safe to keep. Reconciliation CLEARED at the load-bearing level.**
+
 ## L27 — RELAYED "VERIFIED" ≠ EVIDENCE I'VE SEEN: #1 and #3 live proofs are NOT on my filesystem yet
 team-lead relays qa's #1 grounding=VERIFIED (real google_search_call/result blocks) and #3=VERIFIED
 (sentinel-token fresh-run discovery). My gate requires the BLOCKS, not the conclusion. As of this writing the
