@@ -431,11 +431,15 @@ def _tool_breadcrumb(step) -> str | None:
     (web/STREAM_CONTRACT.md adapter table) but tolerate anything missing —
       * code_execution_call   -> `$ <arguments.code>` (the command/code the agent ran),
       * code_execution_result -> a short status line (`✗ error` / `✓ ok`) + any result text,
-      * google_search_call    -> `🔎 <query>` (the search the agent ran while grounding),
-      * google_search_result  -> `🔎 ✓ <N results / snippet>`,
-      * url_context_call      -> `🌐 <url>` (the page the agent fetched to ground a claim),
-      * url_context_result    -> `🌐 ✓ <title / snippet>`,
+      * google_search_call    -> `🔎 <q1; q2>` (arguments.QUERIES is a List[str], plural),
+      * google_search_result  -> `🔎 ✓ <N results>` (result is a List[GoogleSearchResult]),
+      * url_context_call      -> `🌐 <u1; u2>` (arguments.URLS is a List[str], plural),
+      * url_context_result    -> `🌐 ✓ <url (status)>` (result is a List[URLContextResult]),
       * thought               -> `💭 <summary>` (a thinking-summary block, Feature 2).
+    The field names are the REAL installed-SDK shapes (google.genai._interactions.types:
+    GoogleSearchCallArguments.queries / URLContextCallArguments.urls / GoogleSearchResult.
+    search_suggestions / URLContextResult.status+url) — NOT singular .query/.url, which a
+    real grounding call never sets (that bug rendered nothing for genuine grounding).
     The grounding/thought breadcrumbs make web-grounding + thinking PROVABLE in the live
     trace (they only ever appear when those opt-in capabilities are exercised).
     Returns None when the step isn't a tool step or exposes no usable detail, so the caller
@@ -464,17 +468,17 @@ def _tool_breadcrumb(step) -> str | None:
         mark = "✗ error" if is_error else "✓ ok"
         return f"{mark}{snippet}".rstrip() or None
     if stype == "google_search_call":
-        query = _step_field(step, "arguments", "query") or _step_field(step, "query")
-        return f"🔎 {str(query).strip()[:200]}" if query else None
+        queries = _as_str_list(_step_field(step, "arguments", "queries"))
+        return f"🔎 {'; '.join(queries)[:200]}" if queries else "🔎 (search)"
     if stype == "google_search_result":
-        snippet = _result_snippet(step)
-        return ("🔎 ✓" + (f" {snippet}" if snippet else "")).rstrip()
+        results = _as_list(_step_field(step, "result"))
+        n = len(results)
+        return f"🔎 ✓ {n} result{'s' if n != 1 else ''}" if n else "🔎 ✓"
     if stype == "url_context_call":
-        url = _step_field(step, "arguments", "url") or _step_field(step, "url")
-        return f"🌐 {str(url).strip()[:200]}" if url else None
+        urls = _as_str_list(_step_field(step, "arguments", "urls"))
+        return f"🌐 {'; '.join(urls)[:200]}" if urls else "🌐 (fetch)"
     if stype == "url_context_result":
-        snippet = _result_snippet(step)
-        return ("🌐 ✓" + (f" {snippet}" if snippet else "")).rstrip()
+        return _url_context_result_crumb(step)
     if stype == "thought":
         summary = _thought_summary_text(step)
         return f"💭 {summary[:200]}" if summary else None
@@ -484,9 +488,9 @@ def _tool_breadcrumb(step) -> str | None:
 def _step_field(step, *path):
     """Read a (possibly nested) attr/dict field off a step, tolerating either shape.
 
-    e.g. _step_field(step, "arguments", "query") reads step.arguments.query, or
-    step.arguments["query"], or step.query — returning None on any miss. Lets the
-    grounding breadcrumbs work whether the SDK surfaces typed objects or raw dicts.
+    e.g. _step_field(step, "arguments", "queries") reads step.arguments.queries, or
+    step.arguments["queries"] — returning None on any miss. Lets the grounding breadcrumbs
+    work whether the SDK surfaces typed objects or raw dicts.
     """
     obj = step
     for key in path:
@@ -496,20 +500,42 @@ def _step_field(step, *path):
         if nxt is None and isinstance(obj, dict):
             nxt = obj.get(key)
         obj = nxt
-    if obj is None and len(path) > 1:
-        # Fall back to the LAST key read directly off the step (flat shape).
-        return _step_field(step, path[-1])
     return obj
 
 
-def _result_snippet(step) -> str:
-    """A short one-line snippet from a tool RESULT step (search/url), best-effort."""
-    result = getattr(step, "result", None)
-    if result is None and isinstance(step, dict):
-        result = step.get("result")
-    if isinstance(result, str) and result.strip():
-        return result.strip().splitlines()[0][:160]
-    return ""
+def _as_list(val):
+    """Normalize a value into a list (SDK result fields are List[...]); None/scalar -> []/[v]."""
+    if val is None:
+        return []
+    if isinstance(val, (list, tuple)):
+        return list(val)
+    return [val]
+
+
+def _as_str_list(val) -> list[str]:
+    """A list of non-empty stripped strings from a List[str] field (queries/urls)."""
+    return [s.strip() for s in (str(x) for x in _as_list(val)) if s.strip()]
+
+
+def _url_context_result_crumb(step) -> str:
+    """`🌐 ✓ <url> (<status>); …` from a url_context_result step.
+
+    result is a List[URLContextResult] where each item carries .url + .status (the real
+    SDK shape). Best-effort: shows the first couple of fetched URLs + their status.
+    """
+    results = _as_list(_step_field(step, "result"))
+    if not results:
+        return "🌐 ✓"
+    parts = []
+    for item in results[:2]:
+        url = _step_field(item, "url")
+        status = _step_field(item, "status")
+        if url and status:
+            parts.append(f"{str(url).strip()} ({str(status).strip()})")
+        elif url:
+            parts.append(str(url).strip())
+    detail = "; ".join(parts)
+    return f"🌐 ✓ {detail}"[:200] if detail else f"🌐 ✓ {len(results)} fetched"
 
 
 def _thought_tokens(interaction) -> int | None:
@@ -644,29 +670,51 @@ def _bank_forged_skill_from_output(skill_path: str, output_text: str) -> pathlib
 
 
 def _looks_like_thinking_rejection(exc: Exception) -> bool:
-    """Heuristic: did this error come from sending generation_config/thinking_config?
+    """Heuristic: did this error come from sending the agent-path thinking config?
 
-    The managed-agent runtime MAY reject an interaction-scoped generation_config the same
-    way it rejects temperature (docs/RESEARCH §3 lists thinking_level as a MODEL knob; the
-    AGENT path accepting it is UNVERIFIED). We can't know the exact exception type from a
-    dev box, so we match the message defensively and treat ANY error on the thinking-bearing
-    call as "retry without it" — the retry path re-raises if it ALSO fails, so a genuine
-    unrelated error still surfaces.
+    qa LIVE-PROVED the managed-agent runtime rejects every thinking config shape (400):
+    a top-level generation_config -> "use agent_config"; generation_config in extra_body ->
+    "Unknown parameter". We now send the SDK-correct agent_config={"type":"dynamic",
+    "thinking_level": …}; if THAT is also rejected we still want a graceful no-op. We can't
+    rely on a specific exception type from a dev box, so we match the message defensively and
+    treat a thinking-shaped error as "retry without it" — the retry re-raises if it ALSO
+    fails, so a genuine unrelated error still surfaces (it won't recur once we drop
+    agent_config).
     """
     msg = str(exc).lower()
     return any(k in msg for k in (
-        "thinking", "generation_config", "generationconfig", "unknown field",
-        "unexpected", "invalid argument", "not supported", "unsupported",
+        "thinking", "agent_config", "agentconfig", "generation_config", "generationconfig",
+        "unknown field", "unknown parameter", "unexpected", "invalid argument",
+        "not supported", "unsupported",
     ))
+
+
+def _thinking_agent_config(level: str) -> dict:
+    """The agent-path thinking config the SDK actually accepts (Feature 2).
+
+    SOURCE OF TRUTH = the installed SDK types (google.genai._interactions.types), NOT the
+    generate_content shape:
+      * The AGENT interaction params (BaseCreateAgentInteractionParams) expose `agent_config`,
+        NOT `generation_config` (which is MODEL-path only). A top-level generation_config
+        kwarg is rejected ("use agent_config"); generation_config in extra_body is rejected
+        ("Unknown parameter"). qa confirmed both live.
+      * `thinking_level` is a FLAT key (interactions GenerationConfigParam.thinking_level —
+        there is NO nested thinking_config in the interactions types), a lowercase Literal
+        ['minimal','low','medium','high'] matching our env values directly.
+      * DynamicAgentConfigParam requires {"type": "dynamic"} and allows extra items
+        (TypedDict total=False, extra_items=object), so the flat thinking_level rides on it.
+    """
+    return {"type": "dynamic", "thinking_level": level}
 
 
 def _create_interaction_stream(client: genai.Client, *, input_text: str, environment):
     """interactions.create(stream=True), optionally with an interaction-scoped thinking
-    config (Feature 2). DEFAULT (LAZARUS_THINKING unset): sends NO generation_config —
-    byte-identical to the shipped call. When a level IS configured we attach
-    generation_config={"thinking_config":{"thinking_level": <lvl>}}; if the agent runtime
-    rejects it (graceful no-op), we set THINKING_REJECTED and retry WITHOUT it so the run
-    still completes. Returns the stream iterator.
+    level (Feature 2). DEFAULT (LAZARUS_THINKING unset / medium): sends NO agent_config —
+    byte-identical to the shipped call. When a non-default level IS configured we attach the
+    SDK-correct agent-path shape agent_config={"type":"dynamic","thinking_level": <lvl>}
+    (flat thinking_level, NOT generation_config — see _thinking_agent_config). If the agent
+    runtime rejects it (graceful no-op — qa proved it does, 400), we set THINKING_REJECTED
+    and retry WITHOUT it so the run still completes. Returns the stream iterator.
     """
     base_kwargs = dict(
         agent=AGENT_ID,
@@ -678,9 +726,9 @@ def _create_interaction_stream(client: genai.Client, *, input_text: str, environ
     if level is None:
         return client.interactions.create(**base_kwargs)
 
-    # Opt-in: request the thinking level (interaction-scoped generation_config).
+    # Opt-in: request the thinking level via the agent-path agent_config (flat thinking_level).
     thinking_kwargs = dict(base_kwargs)
-    thinking_kwargs["generation_config"] = {"thinking_config": {"thinking_level": level}}
+    thinking_kwargs["agent_config"] = _thinking_agent_config(level)
     try:
         stream = client.interactions.create(**thinking_kwargs)
         emit_to_ui(f"[thinking_level={level}]\n")

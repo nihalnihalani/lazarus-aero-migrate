@@ -343,21 +343,22 @@ def test_grounding_breadcrumbs_use_real_sdk_types(agent_mod):
         pytest.skip("google.genai._interactions.types not importable in this SDK")
     it = _SDK_ITX_TYPES
 
-    # NOTE: the real SDK content classes are *CallContent / *ResultContent (there is NO
-    # *Step type — the step's .type + .arguments/.result are what _tool_breadcrumb reads).
-    sc = it.GoogleSearchCallContent.model_validate({
+    # The real SDK step types (confirmed present in google.genai._interactions.types):
+    # GoogleSearchCallStep / URLContextCallStep / URLContextResultStep. _tool_breadcrumb
+    # reads step.type + step.arguments.{queries,urls} / step.result[].{url,status}.
+    sc = it.GoogleSearchCallStep.model_validate({
         "id": "c1", "type": "google_search_call",
         "arguments": {"queries": ["COBOL ROUNDED rounding mode"]}})
     assert sc.arguments.queries == ["COBOL ROUNDED rounding mode"]   # real SDK field, plural
     assert agent_mod._tool_breadcrumb(sc) == "🔎 COBOL ROUNDED rounding mode"
 
-    uc = it.URLContextCallContent.model_validate({
+    uc = it.URLContextCallStep.model_validate({
         "id": "c2", "type": "url_context_call",
         "arguments": {"urls": ["https://example.com/cobol"]}})
     assert uc.arguments.urls == ["https://example.com/cobol"]        # real SDK field, plural
     assert agent_mod._tool_breadcrumb(uc) == "🌐 https://example.com/cobol"
 
-    ur = it.URLContextResultContent.model_validate({
+    ur = it.URLContextResultStep.model_validate({
         "call_id": "c2", "type": "url_context_result",
         "result": [{"url": "https://example.com/cobol", "status": "success"}]})
     crumb = agent_mod._tool_breadcrumb(ur)
