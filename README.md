@@ -40,7 +40,7 @@ LAZARUS is a **single autonomous agent** (no fragile multi-agent orchestration) 
 
 | Criterion | Weight | LAZARUS |
 |---|---|---|
-| **Live Demo** | 45% | Visible `red → green` loop + self-authored skill + a *verifiable* diff against real COBOL. Deterministic, single sandbox call, no network. |
+| **Live Demo** | 45% | Visible `red → green` loop + self-authored skill + a *verifiable* diff against real COBOL. Deterministic, single sandbox call, no network on stage (GnuCOBOL is installed at pre-warm into the reused env). |
 | **Creativity / Originality** | 35% | Business-rule recovery + differential equivalence + live self-authoring lift it well above the generic SWE-agent genre. |
 | **Impact** | 20% | Best on the board — $2.41T tech debt (CISQ/Synopsys 2022), the NJ unemployment crisis, a real **$30B+** legacy-modernization market (Mordor $29.39B / Grand View ~$30B, 2026). |
 | **$5k Managed Agents bonus** | — | Textbook: model writes & runs its own code, persists files, and forges its own skills, all in the hosted sandbox. |

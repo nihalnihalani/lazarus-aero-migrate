@@ -1,44 +1,45 @@
 """
 LAZARUS — FastAPI + SSE bridge (browser <-> live Managed Agent).
 
-Serves the web/ UI and exposes /api/migrate as a Server-Sent Events stream that
-drives the REAL Gemini Managed Agent (src/agent.py) and forwards its progress to
-the live-trace UI in the canonical event shape (web/STREAM_CONTRACT.md).
+Serves the web/ UI and drives the REAL Gemini Managed Agent (src/agent.py),
+forwarding its progress to the live-trace UI as CANONICAL events
+(web/STREAM_CONTRACT.md). There is NO mock here — the scripted run survives only
+as the UI's `?mock=1` break-glass. With no GEMINI_API_KEY this returns an
+explicit 503 (never fake data).
 
-There is NO mock here. The scripted run survives only as the UI's `?mock=1`
-break-glass (Safety-operator fallback). With no GEMINI_API_KEY this endpoint
-returns an explicit 503 — never fake data.
+Endpoint contract (matches web/src/live.js, mode='canonical'):
+    POST /api/migrate   { cobol, filename }     -> { run_id }
+    GET  /api/stream/{run_id}                    -> text/event-stream (canonical events)
+    GET  /api/download/{run_id}                  -> migrated module bytes (when available)
+    GET  /api/health                             -> liveness + key/agent info
 
-What this bridge derives TODAY, offline, from agent.py's stream:
-  - `phase`  : the enforced iteration counter (agent.emit_iteration) + lifecycle.
-  - `step`   : the live "agent working" trace (agent.emit_to_ui text deltas).
-  - `forge`  : detected from the agent's reported forged-skill path.
-  - `pytest` : RED/GREEN verdict from the agent's terminal message.
-  - `download`: the migrated module fetched from the sandbox (Files API; see note).
-  - `done`   : terminal verdict + environment_id.
-
-The richer semantic panels (`business_rule`, `diff`, structured per-case
-`pytest`, `oracle`) are parsed from the agent's real tool outputs and are wired
-against the LIVE API on the day — the agent isn't reachable from a dev box
-without the provisioned key. The UI degrades gracefully (panels stay empty until
-their events arrive). Run `scripts/smoke_test.py` the instant the key exists to
-validate the whole live path.
+What this bridge derives TODAY from agent.py's stream: `phase` (enforced
+iteration counter + lifecycle), `step` (live trace), `forge` (detected skill),
+`pytest` (RED/GREEN verdict), `download`, `done`. The richer semantic panels
+(`business_rule`, `diff`, structured per-case `pytest`, `oracle`) are parsed from
+the agent's real tool outputs and wired against the LIVE API on the day — the
+agent isn't reachable from a dev box without the provisioned key. Validate the
+whole live path with `scripts/smoke_test.py` the instant the key exists.
 
 Run:
     pip install -r requirements.txt
     export GEMINI_API_KEY=...            # provisioned at the event
     uvicorn server:app --app-dir src --reload
-    # open http://127.0.0.1:8000  (UI is served at /)
+    # open http://127.0.0.1:8000   (UI at /, live by default; ?mock=1 = break-glass)
 """
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 import pathlib
+import queue
+import tempfile
 import threading
+import uuid
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 
@@ -50,28 +51,20 @@ SAMPLE_DIR = ROOT / "src" / "sample"
 
 app = FastAPI(title="LAZARUS — Aero-Migrate", version="1.0")
 
+# run_id -> {"queue": queue.Queue (thread-safe, loop-independent), "download": str|None}
+_RUNS: dict[str, dict] = {}
+_SENTINEL = object()  # marks end-of-stream in the queue
+
 
 def _key_present() -> bool:
-    import os
-
     return bool(os.environ.get("GEMINI_API_KEY"))
 
 
-def _resolve_module(module: str) -> pathlib.Path:
-    """Resolve a requested COBOL module to a path under src/sample (no traversal)."""
-    name = pathlib.Path(module).name  # strip any directory components
-    return SAMPLE_DIR / name
-
-
 def _download_migrated(client, env_id: str | None) -> str | None:
-    """Fetch the agent-written payroll.py from the persistent sandbox.
-
-    The migrated module lives in the reused environment; pull it via the Files
-    API. The exact Files-API call is pinned on the day against the live SDK
-    (researcher-agents: tarball export of the environment), so this is a
-    best-effort hook that returns None until wired — the UI simply leaves the
-    Download button un-armed rather than serving a stand-in.
-    """
+    """Fetch the agent-written payroll.py from the persistent sandbox via the
+    Files API. Pinned on the day against the live SDK (tarball export of the
+    reused environment); best-effort hook that returns None until wired, so the
+    Download button stays un-armed rather than serving a stand-in."""
     if not env_id:
         return None
     try:
@@ -81,9 +74,70 @@ def _download_migrated(client, env_id: str | None) -> str | None:
         return None
 
 
+def _run_migration(run_id: str, cobol: str, filename: str) -> None:
+    """Worker thread: drive the real agent, pushing canonical events to the run's queue.
+
+    Uses a thread-safe queue.Queue (NOT asyncio.Queue) so it is independent of
+    which event loop the POST and GET-stream requests run on.
+    """
+    run = _RUNS[run_id]
+    q: queue.Queue = run["queue"]
+
+    def push(ev) -> None:
+        q.put(ev)
+
+    orig_emit, orig_iter = agent_mod.emit_to_ui, agent_mod.emit_iteration
+    agent_mod.emit_to_ui = lambda text: push({"type": "step", "kind": "output", "text": text})
+    agent_mod.emit_iteration = lambda c, t: push(
+        {"type": "phase", "phase": "test", "iteration": c,
+         "iteration_cap": t, "label": f"Iteration {c}/{t}"}
+    )
+    tmp_path = None
+    try:
+        push({"type": "phase", "phase": "ingest",
+              "label": f"Provisioning sandbox + reading {filename}"})
+        with tempfile.NamedTemporaryFile("w", suffix=".cob", delete=False) as fh:
+            fh.write(cobol)
+            tmp_path = fh.name
+
+        client = agent_mod.genai.Client()  # reads GEMINI_API_KEY
+        agent_mod.ensure_agent(client)
+        result = agent_mod.migrate(client, tmp_path)
+
+        output = agent_mod.extract_output_text(result)
+        skill = agent_mod._forged_skill_path(output)
+        if skill:
+            push({"type": "forge", "skill": skill,
+                  "reason": "Unknown idiom: numeric DISPLAY format + ROUND-HALF-UP."})
+            push({"type": "reload",
+                  "label": f"Re-reading {skill} in the reused environment"})
+        passed = agent_mod._tests_passed(output)
+        push({"type": "pytest", "result": "green" if passed else "red",
+              "summary": output[-500:]})
+
+        env_id = agent_mod.extract_environment_id(result)
+        migrated = _download_migrated(client, env_id)
+        run["download"] = migrated
+        if migrated is not None:
+            push({"type": "download", "name": "payroll.py",
+                  "mime": "text/x-python", "content": migrated})
+        push({"type": "done",
+              "verdict": "EQUIVALENT" if passed else "INCOMPLETE",
+              "environment_id": env_id})
+    except Exception as e:  # surface real errors to the UI, never fake success
+        push({"type": "error", "message": f"{type(e).__name__}: {e}"})
+    finally:
+        agent_mod.emit_to_ui, agent_mod.emit_iteration = orig_emit, orig_iter
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+        q.put(_SENTINEL)  # end of stream
+
+
 @app.get("/api/health")
 def health():
-    """Liveness + whether a key is present (the UI shows a clear banner if not)."""
     return {
         "ok": True,
         "gemini_api_key_present": _key_present(),
@@ -93,88 +147,73 @@ def health():
     }
 
 
-@app.get("/api/migrate")
-async def migrate_stream(request: Request, module: str = "payroll.cob"):
-    """Drive the real Managed Agent and stream canonical events as SSE."""
+@app.post("/api/migrate")
+async def migrate_start(request: Request):
+    """Kick off a migration; return a run_id the UI subscribes to via /api/stream."""
     if not _key_present():
         return JSONResponse(
             status_code=503,
-            content={
-                "type": "error",
-                "error": "GEMINI_API_KEY not set",
-                "hint": "export GEMINI_API_KEY=...  (Gemini API key, provisioned at the event)",
-            },
+            content={"type": "error", "error": "GEMINI_API_KEY not set",
+                     "hint": "export GEMINI_API_KEY=... (Gemini API key, provisioned at the event)"},
         )
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    cobol = (body or {}).get("cobol")
+    filename = (body or {}).get("filename", "payroll.cob")
+    if not cobol:
+        sample = SAMPLE_DIR / "payroll.cob"  # convenience fallback to the golden sample
+        if sample.exists():
+            cobol = sample.read_text()
+        else:
+            raise HTTPException(status_code=400, detail="no COBOL provided")
 
-    cobol_path = _resolve_module(module)
-    if not cobol_path.exists():
-        raise HTTPException(status_code=404, detail=f"module not found: {module}")
+    run_id = uuid.uuid4().hex
+    _RUNS[run_id] = {"queue": queue.Queue(), "download": None}
+    threading.Thread(
+        target=_run_migration, args=(run_id, cobol, filename), daemon=True
+    ).start()
+    return {"run_id": run_id}
 
-    loop = asyncio.get_running_loop()
-    q: asyncio.Queue = asyncio.Queue()
 
-    def push(ev) -> None:
-        loop.call_soon_threadsafe(q.put_nowait, ev)
-
-    def worker() -> None:
-        # Bridge agent.py's text/counter hooks into the canonical SSE shape.
-        # (Process-wide override — fine for a single-session demo; restored in
-        # finally so a later run / concurrent request isn't left patched.)
-        orig_emit, orig_iter = agent_mod.emit_to_ui, agent_mod.emit_iteration
-        agent_mod.emit_to_ui = lambda text: push(
-            {"type": "step", "kind": "output", "text": text}
-        )
-        agent_mod.emit_iteration = lambda c, t: push(
-            {"type": "phase", "phase": "test", "iteration": c,
-             "iteration_cap": t, "label": f"Iteration {c}/{t}"}
-        )
-        try:
-            push({"type": "phase", "phase": "ingest",
-                  "label": "Provisioning sandbox + reading COBOL"})
-            client = agent_mod.genai.Client()  # reads GEMINI_API_KEY
-            agent_mod.ensure_agent(client)
-            result = agent_mod.migrate(client, str(cobol_path))
-
-            output = agent_mod.extract_output_text(result)
-            skill = agent_mod._forged_skill_path(output)
-            if skill:
-                push({"type": "forge", "skill": skill,
-                      "reason": "Unknown idiom: numeric DISPLAY format + ROUND-HALF-UP."})
-                push({"type": "reload",
-                      "label": f"Re-reading {skill} in the reused environment"})
-            passed = agent_mod._tests_passed(output)
-            push({"type": "pytest",
-                  "result": "green" if passed else "red",
-                  "summary": output[-500:]})
-
-            env_id = agent_mod.extract_environment_id(result)
-            migrated = _download_migrated(client, env_id)
-            if migrated is not None:
-                push({"type": "download", "name": "payroll.py",
-                      "mime": "text/x-python", "content": migrated})
-            push({"type": "done",
-                  "verdict": "EQUIVALENT" if passed else "INCOMPLETE",
-                  "environment_id": env_id})
-        except Exception as e:  # surface real errors to the UI, never fake success
-            push({"type": "error", "message": f"{type(e).__name__}: {e}"})
-        finally:
-            agent_mod.emit_to_ui, agent_mod.emit_iteration = orig_emit, orig_iter
-            push(None)  # sentinel: end of stream
-
-    threading.Thread(target=worker, daemon=True).start()
+@app.get("/api/stream/{run_id}")
+async def migrate_stream(run_id: str, request: Request):
+    """Stream a run's canonical events as SSE until the terminal `done`/`error`."""
+    run = _RUNS.get(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="unknown run_id")
+    q: queue.Queue = run["queue"]
 
     async def event_gen():
-        while True:
-            if await request.is_disconnected():
-                break
-            ev = await q.get()
-            if ev is None:
-                break
-            yield {"data": json.dumps(ev)}
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                ev = await asyncio.to_thread(q.get)  # loop-independent blocking get
+                if ev is _SENTINEL:
+                    break
+                yield {"data": json.dumps(ev)}
+        finally:
+            _RUNS.pop(run_id, None)  # one subscriber per run; clean up
 
     return EventSourceResponse(event_gen())
 
 
-# Serve the live-trace UI at / (must be mounted last so /api/* wins).
+@app.get("/api/download/{run_id}")
+def download(run_id: str):
+    """Return the migrated module for a finished run (when the Files-API hook is wired)."""
+    run = _RUNS.get(run_id)
+    content = run.get("download") if run else None
+    if not content:
+        raise HTTPException(status_code=404, detail="migrated module not available yet")
+    return PlainTextResponse(
+        content,
+        media_type="text/x-python",
+        headers={"Content-Disposition": 'attachment; filename="payroll.py"'},
+    )
+
+
+# Serve the live-trace UI at / (mounted last so /api/* wins).
 if WEB_DIR.is_dir():
     app.mount("/", StaticFiles(directory=str(WEB_DIR), html=True), name="web")
