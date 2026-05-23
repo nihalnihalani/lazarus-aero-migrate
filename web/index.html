@@ -109,24 +109,16 @@
     </section>
   </main>
 
-  <!-- ── transport bar ────────────────────────────────────────── -->
+  <!-- ── transport bar (live) ─────────────────────────────────── -->
   <footer class="transport">
     <div class="transport-left">
-      <button class="t-btn play" id="play-btn" data-playing="false" title="play / pause (space)">
+      <button class="t-btn play" id="play-btn" data-playing="false" title="run migration (space)">
         <span class="ic-play">▶</span><span class="ic-pause">❚❚</span>
       </button>
-      <button class="t-btn" id="restart-btn" title="restart (r)">↺</button>
-      <button class="t-btn" id="skip-btn" title="skip to end (f)">⇥</button>
-      <div class="scrub"><div class="scrub-fill" id="scrub-fill"></div></div>
-      <span class="clock" id="clock">0.0s / 0.0s</span>
+      <button class="t-btn" id="restart-btn" title="re-run (r)">↺</button>
+      <span class="clock" id="clock">live</span>
     </div>
     <div class="transport-right">
-      <div class="speeds">
-        <button class="speed-btn" data-speed="0.5">0.5×</button>
-        <button class="speed-btn active" data-speed="1">1×</button>
-        <button class="speed-btn" data-speed="2">2×</button>
-        <button class="speed-btn" data-speed="4">4×</button>
-      </div>
       <span class="status" id="meta-status">booting…</span>
       <button class="download-btn" id="download-btn" disabled>
         <span class="dl-ic">⤓</span> DOWNLOAD MIGRATED MODULE

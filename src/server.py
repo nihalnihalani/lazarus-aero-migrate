@@ -60,16 +60,54 @@ def _key_present() -> bool:
     return bool(os.environ.get("GEMINI_API_KEY"))
 
 
-def _download_migrated(client, env_id: str | None) -> str | None:
-    """Fetch the agent-written payroll.py from the persistent sandbox via the
-    Files API. Pinned on the day against the live SDK (tarball export of the
-    reused environment); best-effort hook that returns None until wired, so the
-    Download button stays un-armed rather than serving a stand-in."""
+def _fetch_env_tarball(env_id: str) -> bytes:
+    """Download the whole-environment tarball via the Files API (findings-agents.md §9,
+    cookbook-verbatim URL). Requires GEMINI_API_KEY. Raises on any HTTP/network error."""
+    import urllib.request
+    key = os.environ.get("GEMINI_API_KEY", "")
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/files/"
+        f"environment-{env_id}:download?alt=media"
+    )
+    req = urllib.request.Request(url, headers={"x-goog-api-key": key})
+    with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 (trusted host)
+        return resp.read()
+
+
+def _extract_migrated_from_tar(tar_bytes: bytes, module_name: str = "payroll.py") -> str | None:
+    """Extract the migrated module's text from an environment tarball.
+
+    Looks for `<...>/workspace/<module_name>` (the agent writes the migration into
+    /workspace). Returns the file's text, or None if it isn't present.
+    """
+    import io
+    import tarfile
+    with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:*") as tar:
+        for member in tar.getmembers():
+            if not member.isfile():
+                continue
+            name = member.name.lstrip("./")
+            if name == f"workspace/{module_name}" or name.endswith(f"/workspace/{module_name}") \
+                    or name.endswith(f"/{module_name}") and "workspace" in name.split("/"):
+                fh = tar.extractfile(member)
+                if fh is not None:
+                    return fh.read().decode("utf-8", errors="replace")
+    return None
+
+
+def _download_migrated(env_id: str | None, *, module_name: str = "payroll.py",
+                       fetch_tarball=None) -> str | None:
+    """Fetch the agent-written module from the persistent sandbox via the Files API.
+
+    `fetch_tarball(env_id) -> bytes` is injectable for testing; defaults to the real
+    Files-API call. Returns None (so the Download button stays un-armed, never serving a
+    stand-in) when there's no env id or any fetch/extract error.
+    """
     if not env_id:
         return None
+    fetch = fetch_tarball or _fetch_env_tarball
     try:
-        # TODO(day-of): replace with the verified Files-API export for env_id.
-        return None
+        return _extract_migrated_from_tar(fetch(env_id), module_name)
     except Exception:
         return None
 
@@ -116,7 +154,7 @@ def _run_migration(run_id: str, cobol: str, filename: str) -> None:
               "summary": output[-500:]})
 
         env_id = agent_mod.extract_environment_id(result)
-        migrated = _download_migrated(client, env_id)
+        migrated = _download_migrated(env_id)
         run["download"] = migrated
         if migrated is not None:
             push({"type": "download", "name": "payroll.py",
