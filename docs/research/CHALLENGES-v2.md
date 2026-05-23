@@ -508,3 +508,20 @@ complete runnable module that passes the oracle 10/10. L9 is solid on BOTH the d
 and scrape-fallback paths. No reopen — this only strengthens the resolution I signed off. L12
 (download-404 post-stream) → Phase-2 fix 8f1e7ea (_COMPLETED_DOWNLOADS LRU), qa to confirm on the
 Phase-2 run; correctly deferred, not a Phase-1 blocker. Sign-off stands.
+
+---
+
+## RUN-ID CRUX — SETTLED two independent ways (qa + my own git/data check). Sign-off maximally grounded.
+
+The one thing I most wanted certainty on — was the completeness sign-off based on a COMPLETED,
+POST-fix, real-key run (not the mechanism alone, not a pre-fix run)? — is now settled definitively.
+I verified BOTH of qa's proofs myself:
+1. LINEAGE: `git merge-base --is-ancestor ea6fe12 6b0b89d` = YES → 6b0b89d (which f9e71470 ran on)
+   contains the model_output fix → f9e71470 is POST-fix.
+2. DATA: f9e71470's stream (/tmp/sse_full4.jsonl) contains `"source": "model_output"` — a label
+   only the post-fix `python_module_from_output` path can emit. The run data itself proves the fix
+   fired on that run.
+Earlier pre-fix run 1ccbf78f had diff/download EMPTY (that empty result IS the evidence it predated
+the fix). So: f9e71470 = a completed, provably-post-fix, real-key run where diff+download populated
+with the agent's real module (oracle 10/10, EQUIVALENT, ~514s). My sign-off rests on real live
+evidence, confirmed two ways. Nothing left to verify. DEVIL'S-ADVOCATE REVIEW CLOSED.
