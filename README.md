@@ -80,7 +80,7 @@ LAZARUS is a **single autonomous agent** (no fragile multi-agent orchestration) 
 2. **Recovers the lost business logic** — explains, in plain English, the undocumented rules the COBOL encodes (the "archaeology" that makes this more than a transpiler).
 3. **Translates** COBOL → idiomatic Python in the sandbox.
 4. **Proves equivalence against the real compiler.** Ground truth is the **original COBOL's real GnuCOBOL output**, captured ahead of time into [`src/sample/golden_io.json`](src/sample/golden_io.json) — the **falsifiable floor**. The agent also installs GnuCOBOL in-sandbox (via micromamba / conda-forge userland, no root) and recompiles `cobc` live as an *opportunistic refresh*. Either way, equivalence is asserted **byte-for-byte**, and the verdict follows the oracle — not the agent's self-report. Two bundled samples exercise **opposite** COBOL idioms — `payroll.cob` (`ROUND-HALF-UP`) and `interest.cob` (`COMPUTE` without `ROUNDED` → truncation) — each proven against real GnuCOBOL, and each one breaks a naive `round()` port; evidence the loop generalizes, not pattern-matches one file. (`src/sample/build_samples.sh` re-captures both goldens from live `cobc` and verifies the committed bytes.)
-5. **Self-heals via FORGE** — on an unsupported idiom (e.g. COBOL numeric `DISPLAY` formatting + `ROUND-HALF-UP`), it authors a `SKILL.md` into its live sandbox; the next pass reuses the **same `environment_id`** and re-discovers the skill at startup, re-running until tests go **red → green**. *(Within a session the skill stays live; a fresh invocation forks the base env clean — to bank a skill permanently you re-register the agent with it mounted. We do **not** claim mid-run hot-reload or automatic cross-run accumulation.)*
+5. **Self-heals via FORGE** — on an unsupported idiom (e.g. COBOL numeric `DISPLAY` formatting + `ROUND-HALF-UP`), it authors a `SKILL.md` into its live sandbox; the next pass reuses the **same `environment_id`** and re-discovers the skill at startup, re-running until tests go **red → green**. *(Within a session the skill stays live; a fresh invocation forks the base env clean. An **opt-in, experimental** cross-run library (off by default) banks the forged `SKILL.md` to disk and re-mounts it on the next run so skills can accumulate across runs — see "opt-in agent capabilities" below. We still do **not** claim mid-run hot-reload.)*
 
 ### Why this wins
 
@@ -90,6 +90,19 @@ LAZARUS is a **single autonomous agent** (no fragile multi-agent orchestration) 
 | **Self-authored `SKILL.md` (FORGE)** | Uses the documented `.agents/skills/*/SKILL.md` auto-discovery primitive — the on-stage "agent upgrades itself" beat, and the **$5k Managed Agents bonus**. |
 | **Business-rule recovery** | Reframes "code translator" (seen 100×) into "institutional-knowledge archaeology" (never seen). |
 | **Single-agent honesty** | Only documented Managed Agents features: code execution + file persistence. No unsupported sub-agent/MCP claims. |
+
+### Experimental: opt-in agent capabilities
+
+Four further Managed-Agents capabilities are implemented **behind default-OFF flags** — the verified single-module path above is **byte-identical** when they're off (regression-tested). Each is scoped honestly:
+
+| Capability | How to enable | Status |
+|---|---|---|
+| **Web-grounding** — consult `google_search` / `url_context` on an unfamiliar idiom before translating | `LAZARUS_GROUND=1` | Wired + unit-tested; grounding is an *opportunistic* consult (the agent often verifies by compiling instead). Live count receipt is a documented follow-up. |
+| **Cross-run skill library** — bank a forged `SKILL.md` to disk and re-mount it on the next run so skills accumulate | re-register on change (off by default) | Fresh-run discovery observed; the full banking-on-forge receipt is a documented follow-up. |
+| **Whole-codebase ingestion** — recover cross-module rules from several files at once | `python -m agent --input a.cob b.cob …` (CLI/API) | Implemented + unit-tested. **Not** oracle-byte-verified (the golden is single-module); the web demo stays single-file. |
+| **Configurable thinking depth** — `thinking_level` | `LAZARUS_THINKING=…` | **No depth control.** The runtime accepts the param but silently ignores it; reasoning runs at the default. Kept only as an honest, graceful no-op — we do not claim depth control. |
+
+> These ship default-off and **experimental**: the network-free unit/static suite and the devil's-advocate honesty audit ([`docs/research/CHALLENGES-v2.md`](docs/research/CHALLENGES-v2.md), L16–L30) cover them; the **live empirical receipts (grounding count, banked-on-forge file, cross-module rule) are a documented follow-up.**
 
 ## 3. Tech Stack
 
@@ -115,7 +128,7 @@ export GEMINI_API_KEY=...     # optional — live migration; ?mock=1 replays wit
 Run the test suite (network-free, no key, no cobc needed):
 
 ```bash
-pytest -q          # 96 tests
+pytest -q          # 154 tests
 ```
 
 ## 5. Repository Layout
@@ -124,13 +137,13 @@ pytest -q          # 96 tests
 lazarus-aero-migrate/
 ├── README.md
 ├── run.sh                           # one-command launcher (UI + live agent)
-├── .github/workflows/tests.yml      # CI: runs the 96 tests on every push
+├── .github/workflows/tests.yml      # CI: runs the 154 tests on every push
 ├── docs/
 │   ├── ARCHITECTURE.md              # system design, data flow, the oracle
 │   ├── DEMO_SCRIPT.md               # honest live-demo script + de-risking
 │   ├── JUDGING_STRATEGY.md          # scoring map, judge tailoring, $5k strategy
 │   ├── img/CAPTURE.md               # how to grab the demo screenshots
-│   └── research/CHALLENGES-v2.md    # devil's-advocate audit log (L1–L14)
+│   └── research/CHALLENGES-v2.md    # devil's-advocate audit log (L1–L30)
 ├── src/
 │   ├── agent.py                     # Managed-Agent driver: write→run→prove→forge loop
 │   ├── server.py                    # FastAPI/SSE bridge → browser; phase rail
@@ -139,7 +152,7 @@ lazarus-aero-migrate/
 │   └── sample/                      # payroll.cob + interest.cob (2 idioms), refs,
 │                                    #   real golden_io.json, build_samples.sh
 ├── web/                             # live console (index.html, src/*.js, style.css)
-├── tests/                           # 96 network-free tests
+├── tests/                           # 154 network-free tests
 ├── scripts/smoke_test.py           # day-of live validation
 └── requirements.txt
 ```
@@ -148,10 +161,10 @@ lazarus-aero-migrate/
 
 The project's strongest asset is that every claim is checkable:
 
-- **96 tests**, network-free (CI badge above), run on every push.
+- **154 tests**, network-free (CI badge above), run on every push.
 - The verdict **tracks the differential oracle**, not the agent — a wrong module → RED, a crashing module → explicit RED (both tested).
 - Provenance is labeled (`differential_oracle` vs `agent_pytest` vs `model_output`); no fabricated data.
-- A devil's-advocate audit ([`docs/research/CHALLENGES-v2.md`](docs/research/CHALLENGES-v2.md), L1–L14) raised and resolved every overclaim found during the build — unwired panels, a Files-API timeout, a frozen-screen risk, "2-minute" framing, and a live-compile claim — each fixed or retracted with evidence.
+- A devil's-advocate audit ([`docs/research/CHALLENGES-v2.md`](docs/research/CHALLENGES-v2.md), L1–L30) raised and resolved every overclaim found during the build — unwired panels, a Files-API timeout, a frozen-screen risk, "2-minute" framing, and a live-compile claim — each fixed or retracted with evidence.
 
 ---
 

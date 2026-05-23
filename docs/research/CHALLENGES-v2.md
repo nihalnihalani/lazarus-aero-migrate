@@ -713,3 +713,594 @@ qa's verification exactly. L15/task#11 CONFIRMED.
    reference py == live cobc, 10/10 for BOTH payroll + interest. Shipped origin/main d265bbb, 99
    tests, CI green. Reproducible check: `bash src/sample/build_samples.sh` (read-only).
 No fabricated golden. The second-sample honesty bar holds three ways. Task #11 fully CONFIRMED.
+
+---
+
+# ===== feature/agent-capabilities branch — L16+ (devils-advocate merge gate) =====
+
+> Scope: the 4 NEW agent capabilities being added behind flags (web-grounding,
+> thinking_level, cross-run skill library, whole-codebase multi-module). My sign-off
+> gates merge of feature/agent-capabilities → main. Baseline: branch HEAD == main
+> (26f65e4), 99 tests green. The shipped single-module path with ALL flags OFF must
+> stay byte-identical. Cross-checked against docs/RESEARCH_MANAGED_AGENTS.md §3.
+
+## L16 — PRE-IMPLEMENTATION GATE + the central trap (SDK acceptance ≠ runtime acceptance)
+
+**The trap I will hold every feature to.** The installed SDK (google-genai 2.6.0) is a
+Stainless/OpenAPI-generated client that models the UNION of every Interactions surface —
+model path AND agent path. I verified this directly:
+- `GenerationConfigParam` (the type `generation_config=` accepts) includes `thinking_level`
+  BUT ALSO `temperature`, `top_p`, `max_output_tokens`, `stop_sequences`, `seed` — all of
+  which RESEARCH §3 says the Antigravity AGENT rejects/ignores. So the SDK accepting a field
+  is NOT evidence the managed agent honors it.
+- The `Step` union the SDK can deserialize includes `FunctionCallStep`, `FileSearchCallStep`,
+  `GoogleMapsCallStep`, `MCPServerToolCallStep` — none of which the Antigravity agent emits
+  (RESEARCH §3). The SDK modeling a step type ≠ the agent producing it.
+CONSEQUENCE: "the SDK call didn't error" / "the type exists" is NOT acceptance evidence for
+ANY of the 4 features. Acceptance = the managed-agent RUNTIME demonstrably did the thing,
+shown in live stream blocks / usage fields. No exceptions.
+
+**Good news — the evidence FIELDS I demanded all exist in the 2.6.0 type model**, so qa CAN
+produce real proof (these are the exact things to capture):
+- web-grounding: `GoogleSearchCallStep` (type=`google_search_call`, `arguments.queries:[...]`)
+  and/or `URLContextCallStep` (type=`url_context_call`, `arguments.urls:[...]`) in the stream,
+  PLUS `usage.grounding_tool_count[].type == "google_search"` with count > 0.
+- thinking_level: `usage.total_thought_tokens` (a real field on `Usage`) CHANGING between
+  levels (e.g. minimal vs high), AND `ThoughtStep` (type=`thought`, `summary:[...]`) blocks.
+- cross-run skill library: a forged SKILL.md DISCOVERED on a GENUINELY FRESH run (new
+  environment, fork-clean — RESEARCH §4: "every run starts clean"). Surviving in the SAME
+  reused env is NOT cross-run; that is the already-shipped FORGE-retry beat, not a new feature.
+- whole-codebase multi-module: a rule the agent could ONLY derive by reading 2+ files together
+  (a genuine cross-module dependency), not two single-file runs concatenated.
+
+**HARD BLOCK conditions (any one blocks merge):**
+1. ANY flag-OFF change to the shipped path: `_build_prompt(cobol)` string, `build_base_environment()`
+   output (incl. NOT seeding new SKILL.md into `.agents/skills/` — currently empty, AGENTS.md only),
+   or the `interactions.create` kwargs (must remain NO `generation_config`). I diff these directly.
+2. Reaching for `function_calling` / structured output / sub-agents / `mcp` / `file_search` /
+   `computer_use`, or narrating a model-level capability as an agent-runtime one.
+3. A feature claimed VERIFIED on SDK-acceptance / mock evidence alone (the L16 trap).
+
+**Per-feature provisional verdict (pre-evidence): all HOLD** until qa supplies the blocks/tokens
+above from a real-key run on the as-shipped flag-gated code. thinking_level is the highest feasibility
+risk (generation_config is documented only for the MODEL path with `model=`; never demonstrated on the
+AGENT path with `agent=`; §3 rejects the sibling knobs) — it may well be NOT-WORKING (silently ignored
+or 400'd). web-grounding is the most likely to genuinely fire (google_search/url_context ARE supported
+agent tools per §3).
+
+## L17 — WEB-GROUNDING (Feature 1, b15d07e): flag-off SAFE, but the live-trace PROVABILITY is BROKEN (wrong SDK field names) — NEEDS FIX
+
+- **Flag-OFF regression: CLEAN.** `_build_prompt(cobol, ground=False)` → `preamble=""` → the
+  original body string is unchanged (byte-identical); `_build_forge_retry_prompt(..., ground=False)`
+  same; `migrate()` defaults `ground=_grounding_enabled()` = False; NO generation_config added; agent
+  tools unchanged (still default code_execution+google_search+url_context); base_environment untouched.
+  Honest design: the preamble only STEERS the agent toward two SUPPORTED tools (§3) — no unsupported
+  surface reached. No regression.
+- **Attack:** the feature's whole point of provability is the 🔎/🌐 breadcrumbs (and qa's evidence
+  bar) — does the breadcrumb code read the REAL SDK step shapes? I fed `_tool_breadcrumb` actual
+  google-genai 2.6.0 typed steps.
+- **EVIDENCE (reproduction, real SDK types, not assertion):**
+  - `GoogleSearchCallStep(arguments=Arguments(queries=[...]))` → `_tool_breadcrumb` returns **None**.
+    Code reads `arguments.query` (singular); the SDK field is `arguments.queries` (List[str], plural).
+    The flat fallback `_step_field(step,"query")` also misses `queries`. So when grounding GENUINELY
+    fires live, NO 🔎 breadcrumb appears.
+  - `URLContextCallStep(arguments=Arguments(urls=[...]))` → **None**. Same bug: code reads
+    `arguments.url`; SDK field is `arguments.urls` (List[str]).
+  - `GoogleSearchResultStep(result=[Result(search_suggestions=...)])` → `🔎 ✓` with NO snippet.
+    `_result_snippet` does `isinstance(result, str)`, but `result` is `List[Result]` (objects), not a
+    string → snippet empty.
+  - `ThoughtStep(summary=[{text:...}])` → `💭 <summary>` — this one IS correct.
+- **Why it matters:** this is the exact L16 trap in miniature — the code was written to a *guessed*
+  shape (singular query/url, string result), tests only checked the PROMPT text (preamble present/
+  absent), and no test constructs a real grounding step → the bug passed 99-green + the new suite.
+  On a live run, grounding could fire perfectly and the live trace would show NOTHING for the
+  search/url calls, defeating both the demo value AND qa's ability to show me the call blocks.
+- **Verdict: NEEDS FIX (feature-on path).** Two-line fix: read `arguments.queries` (join the list)
+  and `arguments.urls`; make `_result_snippet` handle `List[Result]` (pull `.search_suggestions` /
+  url-context result text). ADD a real unit test that builds a `GoogleSearchCallStep`/`URLContextCallStep`
+  with the SDK types (or the documented dict shape `{"arguments":{"queries":[...]}}`) and asserts the
+  🔎/🌐 breadcrumb renders — so this can't silently regress. SEPARATELY, qa should ALSO capture
+  `usage.grounding_tool_count[].type=="google_search"` count>0 as the AUTHORITATIVE server-side proof
+  (it's a real field on `Usage` and is independent of breadcrumb parsing). Until both the fix lands AND
+  qa shows real google_search_call/url_context_call blocks + grounding_tool_count on a live key,
+  web-grounding stays **HOLD** (NOT the "completed" the task board shows — task #5 reopened to me).
+
+## L18 — THINKING_LEVEL (Feature 2): flag-off SAFE, but it sends the WRONG generation_config SHAPE → the rejection path would FALSELY blame the runtime — NEEDS FIX
+
+- **Flag-OFF regression: CLEAN.** `_thinking_level()` returns None for unset AND for "medium"/
+  sentinels; `_create_interaction_stream` then calls `interactions.create(**base_kwargs)` with the
+  EXACT shipped kwargs (agent, input, stream, extra_body) — NO generation_config. The new tests
+  (test_thinking_unset_sends_no_generation_config / _sentinel_values) lock this. No regression.
+  Honest design touches: graceful-reject → retry-without + THINKING_REJECTED flag + UI line;
+  `[thought_tokens=N]` only when usage reports it; unrelated errors re-raised (not swallowed).
+- **Attack:** is the generation_config SHAPE the one the INTERACTIONS api accepts? I checked the
+  team's OWN research + the installed SDK.
+- **EVIDENCE (two independent sources agree, and the impl contradicts BOTH):**
+  - Impl sends `generation_config={"thinking_config": {"thinking_level": level}}` (NESTED).
+  - RESEARCH_GEMINI_3.5.md §6.1 + findings-gemini.md:112 (verbatim from the live interactions
+    thinking docs): the Interactions API shape is FLAT — `generation_config={"thinking_level": "low"}`.
+    The NESTED `thinking_config=ThinkingConfig(...)` form is the **generate_content** typed-config
+    path (`config=types.GenerateContentConfig(thinking_config=...)`) — a DIFFERENT API surface.
+  - Installed SDK `google.genai._interactions.types.generation_config_param.GenerationConfigParam`:
+    `thinking_level` is a FLAT key; there is NO `thinking_config` key anywhere in the interactions
+    types (`grep -rln thinking_config` over that dir = none). `ThinkingConfig` lives in
+    `google/genai/types.py` (the models path), not interactions.
+  - So the impl copied the generate_content nesting into the interactions generation_config. The
+    agent will receive an unrecognized `thinking_config` key (or silently ignore the nested object).
+- **WHY THIS IS WORSE THAN A TYPO — it corrupts the feature's honesty verdict:** if the malformed
+  config triggers an "unknown field"/"invalid argument" error, `_looks_like_thinking_rejection`
+  MATCHES it (it keys on exactly those words) → sets `THINKING_REJECTED=True` → emits "thinking_level
+  rejected by the managed-agent runtime." The team would then record thinking as NOT-WORKING / "the
+  runtime doesn't support it" — when the REAL cause is *we sent it wrong and never tested the correct
+  flat call.* That's a FALSE provenance: it could (a) wrongly bury a feature that actually works, or
+  (b) let us claim "we gracefully handle the runtime's rejection" without ever having made a
+  well-formed request. Either way the eventual VERIFIED/NOT-WORKING call would be unfounded.
+- **The tests CODIFY the bug:** test_thinking_explicit_level_carries_exact_shape (line 334) asserts
+  `cfg == {"thinking_config": {"thinking_level": level}}` — green because it tests the impl against
+  the same wrong shape. Pure L16-trap closed loop; proves nothing about runtime acceptance.
+- **Verdict: NEEDS FIX before ANY thinking verdict is meaningful.** (1) Send the FLAT interactions
+  shape `generation_config={"thinking_level": level}` (per the team's own §6.1 + the SDK type). (2)
+  Fix the test to assert the flat shape. (3) THEN the live run is decisive: minimal→high must change
+  `usage.total_thought_tokens` AND emit `thought` blocks (accepted), OR a CLEAN flat call gets a
+  genuine rejection (then NOT-WORKING is REAL, not an artifact of malformed input). Until the flat
+  call is what we send, thinking_level = **HOLD** and the THINKING_REJECTED signal is untrustworthy.
+  Task #6 should NOT be "completed."
+
+## L19 — CROSS-RUN SKILL LIBRARY (Feature 3): orchestration is HONEST + CORRECT (I drove it); live verdict hinges on agent ECHO + STARTUP-READ
+
+- **Flag-OFF regression: CLEAN.** With an EMPTY `.agents/skills/` (the shipped world) and no recorded
+  fingerprint, `ensure_agent` returns a no-op (existing agent → 0 create / 0 delete; I drove it).
+  `build_base_environment` mounts only AGENTS.md → base_environment byte-identical to main.
+  `_bank_forged_skill_from_output` is only called on a FAILED iteration AFTER a skill path is detected
+  (it can't run on the shipped happy path). `.skill_fingerprint` is gitignored (verified). No regression.
+- **Honesty of the mechanism: STRONG — it is exactly the RESEARCH §4 verified-safe pattern, not an
+  overclaim.** §4 is explicit: fresh runs fork CLEAN; to make a forged skill durable you re-register
+  the agent with the SKILL.md mounted in `base_environment`. Feature 3 does precisely that: bank the
+  echoed SKILL.md to `.agents/skills/<slug>/` → `ensure_agent` mounts every on-disk SKILL.md into
+  base_environment AND a changed mounted-skill fingerprint forces a delete+recreate so a FRESH
+  invocation inherits it. It does NOT claim silent mid-run hot-reload or "persists forever" (the C16/
+  §4 overclaim I'd block). Banking returns None if the agent never echoed the body ("we never invent
+  skill content") — honest.
+- **EVIDENCE — I drove the FULL cross-run flow myself (deterministic, no key):** simulated a run-A
+  output that announces + echoes `.agents/skills/sign-overpunch/SKILL.md` → `_bank_forged_skill_from_output`
+  wrote the real body to disk → a FRESH `ensure_agent` (agent pre-existing, OLD fingerprint) DELETED +
+  RECREATED the agent, and the new base_environment mounted `.agents/skills/sign-overpunch/SKILL.md`
+  with the banked body verbatim. The orchestration that turns a forge into a cross-run skill is correct.
+- **THE TWO LIVE-ONLY GAPS (qa must prove; this is why #3 is HOLD not VERIFIED):**
+  1. Does the live agent ECHO the forged SKILL.md body in its output text? Banking depends on the body
+     appearing in a fenced block after the path mention. If the agent only writes it to sandbox disk and
+     doesn't echo it, `_bank_forged_skill_from_output` returns None → NOTHING is banked → no cross-run
+     skill. (The Files-API tarball is NOT used here, so disk-only writes are not recovered.)
+  2. Does a GENUINELY FRESH invocation (new environment) actually READ + USE the mounted skill on
+     startup? A skill surviving in the SAME reused env is the already-shipped FORGE-retry beat, NOT a new
+     cross-run capability. I require: run A banks; a SEPARATE fresh run discovers the banked skill from
+     `.agents/skills/` at startup (visible in its recovered-rules / approach).
+- **Verdict: HOLD — code/orchestration VERIFIED honest by my own drive; awaiting qa's two live proofs
+  (agent echoes body → banked file on disk; fresh run picks it up). NOT an overclaim in code.**
+
+## L20 — WHOLE-CODEBASE MULTI-MODULE (Feature 4): flag-off CLEAN, multi-prompt is genuinely cross-module; live verdict = a real cross-module rule
+
+- **Flag-OFF / single-file regression: CLEAN.** `migrate(client, "one.cob")` → `_normalize_cobol_paths`
+  returns a 1-element list → `len(paths)==1` → uses `_build_prompt` (the byte-identical shipped prompt).
+  I verified the single-file (len-1) prompt == `_build_prompt(...)` exactly. The multi path
+  (`_build_multi_prompt`) is reached ONLY when `migrate` gets >1 file. `cobol_path` stays the first
+  positional arg (backward-compatible signature). No regression.
+- **Is it a REAL cross-module capability or just concatenation?** The multi-prompt (verified by reading
+  the rendered text): presents all modules at once, instructs "Treat the files as ONE system," and
+  asks for rules that SPAN modules — shared COPY record layouts, a computation split across a caller +
+  its CALLed subprogram, constants/88-levels defined in one module used by another, lifecycle ordering.
+  It reuses the same LAZARUS_RULE/ORACLE_JSON/MODULE markers so the UI panels work unchanged, and writes
+  the entrypoint to /workspace/payroll.py (download/diff intact). So the PROMPT genuinely solicits
+  cross-module analysis — not a concatenation hack. Honest framing.
+- **THE LIVE GAP (qa must prove):** a LAZARUS_RULE the agent could ONLY produce by reading 2+ files
+  together (e.g. "TAXRATE constant defined in copybook X is applied in module Y"), not three independent
+  single-file rules. Requires a 2+-module sample where a genuine cross-module dependency exists. NOTE:
+  golden_io.json is single-module (payroll) ground truth — a multi-module run's ORACLE/equivalence
+  proof is only as strong as the golden it diffs against; if the codebase entrypoint still maps to the
+  payroll battery, the oracle stays honest, but a NEW multi-module sample would need its own real-cobc
+  golden to prove equivalence (don't claim byte-equivalence for modules with no golden). qa should
+  state which golden the multi-run was proven against.
+- **Verdict: HOLD — code/prompt VERIFIED genuinely cross-module + regression-clean; awaiting qa's one
+  live proof (a real cross-module rule from a 2+-file run, + which golden the oracle used).**
+
+## L21 — qa_capture.py captures the RIGHT grounding evidence, but STRUCTURALLY can't prove thinking/cross-run/cross-module — a "verified" report must not rest on it for those
+
+- **Why this matters:** task #3 (live-verify) is marked completed but I found NO evidence artifacts on
+  disk, and the only capture tool (scripts/qa_capture.py) can test exactly ONE of the four features. A
+  sign-off drawn from a harness that can't exercise a feature is the L16 trap wearing a lab coat.
+- **GROUNDING — the harness is GOOD.** It builds a step-type histogram from BOTH the live stream and the
+  authoritative `get()` fetch, and captures real `google_search_call`/`url_context_call`/result blocks.
+  That's genuine runtime evidence (not SDK-acceptance). Once L17's breadcrumb fix lands AND it also dumps
+  `usage.grounding_tool_count` (currently it reads `usage` but only prints thought/total tokens), this is
+  sufficient to VERIFY grounding.
+- **THINKING — the harness CANNOT test it (two structural reasons):** (1) it never sets `LAZARUS_THINKING`
+  (only `LAZARUS_GROUND`); (2) it calls `client.interactions.create(...)` DIRECTLY (line 62), bypassing
+  `agent._create_interaction_stream`, so the thinking `generation_config` is never sent at all. Its
+  `total_thought_tokens` read therefore only reflects the DEFAULT (medium) thinking. To prove L18's
+  question it must route through the agent's stream helper, run minimal vs high, and show the tokens
+  DIFFER — and only AFTER the flat-shape fix.
+- **CROSS-RUN (#3) / CROSS-MODULE (#4) — NOT covered.** No multi-run banking sequence; no multi-file
+  mode (the docstring advertises `--cobol2` but argparse has only `--cobol`). So neither can be evidenced
+  by this tool as written.
+- **Verdict: harness VERIFIES grounding only (post-L17 + grounding_tool_count). For thinking/cross-run/
+  cross-module, demand either harness additions or explicit manual captures — do NOT accept "qa_capture
+  ran clean" as proof for those three.** Recorded so the merge gate can't be cleared by an
+  under-scoped capture.
+
+## L22 — POST-FIX STATE (HEAD c019274): L17 RESOLVED, L18 shape RESOLVED + thinking LIVE-PROVEN unsupported, regression GREEN
+
+- **L17 (grounding breadcrumbs) — RESOLVED (de85409, verified by me on committed HEAD).** Now reads the
+  plural SDK fields: `🔎 COBOL ROUNDED mode` / `🌐 https://ibm.com/docs` against real `GoogleSearchCallStep
+  (arguments.queries)` / `URLContextCallStep(arguments.urls)`. A real-SDK regression-guard test
+  (`test_grounding_breadcrumbs_use_real_sdk_types`, built via `model_validate`) was added — exactly the
+  test whose absence let the bug slip; it's now resilient to the *Step/*Content class-name question
+  (c019274). 145 tests green, deterministic over 2 runs.
+- **L18 (thinking shape) — code RESOLVED (de85409), AND the deeper truth is LIVE-PROVEN.** The fix sends
+  the SDK-correct AGENT-path shape `agent_config={"type":"dynamic","thinking_level": <lvl>}` (flat
+  thinking_level, NO nested thinking_config, NO generation_config — verified on HEAD). It also catches
+  `agent_config` errors in the rejection heuristic. CROSS-CHECK with the prior real-key session
+  (memory [[thinking-level-rejected-live]], 2026-05-24): the managed-agent path REJECTS every
+  thinking-control shape — typed kwarg → SDK ValueError "If specifying `agent`, use `agent_config`";
+  `extra_body`/`agent_config` nestings → HTTP 400 "Unknown parameter"/"Provide". I confirmed the current
+  `_looks_like_thinking_rejection` catches all four of those real error strings. So thinking DEPTH CONTROL
+  is genuinely NOT supported on this runtime (a real limitation, not our malformed input — my L18 worry
+  is retired BUT the conclusion is the same: thinking_level can't be steered here). The HONEST shippable
+  state: LAZARUS_THINKING is a VERIFIED GRACEFUL NO-OP (sends the best shape, catches the reject, retries
+  clean, sets THINKING_REJECTED for the UI). Thinking still HAPPENS at the default (usage.total_thought_
+  tokens>0 live), it just isn't controllable. **REQUIREMENT for sign-off: README/UI/DEMO must NOT claim
+  thinking-depth control — only "the agent thinks (token-visible); depth is the runtime default, not a
+  knob we can set."** If any doc claims a thinking-level knob works, I BLOCK it.
+- **REGRESSION GATE — GREEN on c019274 (verified definitively):** flags OFF → _build_prompt, forge-retry,
+  base_environment, interaction kwargs ({agent,extra_body,input,stream}, no agent_config/generation_config),
+  ensure_agent clean-fork no-op — ALL byte-identical to main. 145 tests deterministic.
+- **Cross-run skills (#3) corroboration:** memory [[skill-mount-discovery-live]] LIVE-PROVED (ZARFLAX-7731
+  sentinel, real key) that a SKILL.md mounted via base_environment.sources IS auto-discovered at a FRESH
+  interaction's startup — the exact mechanism Feature 3 banks toward. Combined with my own drive of
+  bank→re-register→mount (L19), the cross-run MECHANISM is verified end-to-end. Residual live gap stays:
+  on a real forge run, does the agent ECHO the SKILL.md body so banking captures it (else nothing banks)?
+  qa to show the banked file on disk from a forge run.
+
+## L23 — WHOLE-CODEBASE (#4) is LIBRARY-ONLY: no server / CLI / UI entry point — a scope-honesty boundary
+
+- **Finding:** Feature 4's multi-module path (`migrate(client, cobol_paths=[...])` → `_build_multi_prompt`)
+  is reachable ONLY via a direct Python call. NONE of the shipped surfaces invoke it:
+  - `server.py:340` calls `agent_mod.migrate(client, tmp_path)` — single file; `/api/migrate` accepts
+    `{cobol, filename}` (ONE cobol string, server.py:11).
+  - `web/` (recursive grep) has NO multi-file upload/select path — no `cobol_paths`/multiple/codebase ref.
+  - CLI `main()` has a single `--input` with NO `nargs`, then `migrate(client, args.input)` — can't pass
+    >1 file even from the command line.
+- **Contrast with the other 3 (which ARE reachable):** #1 grounding (env `LAZARUS_GROUND`, read in
+  migrate, server path), #2 thinking (env `LAZARUS_THINKING`, server path), #3 banking (automatic in the
+  migrate loop, server path). #4 alone has no flag and no entry point — it's a bare function signature.
+- **Verdict: NOT an overclaim IN CODE (the function + cross-module prompt are honest and tested), BUT it
+  WOULD be an overclaim to present "LAZARUS migrates a whole codebase" as a usable PRODUCT capability —
+  no shipped surface can run it.** Two honest options before claiming #4 anywhere user-facing:
+  (a) WIRE an entry point (CLI `--input` with `nargs="+"`, or a multi-file UI/endpoint), then qa runs it
+  end-to-end; OR (b) label #4 explicitly as a library/API capability ("the migrate() API accepts a module
+  set; the demo UI drives single-file") and DON'T show it as a clicked-in-the-UI feature. Either is fine;
+  silently demoing it as a product feature is not. Flagged to team-lead. This does NOT affect the
+  regression gate (single-file path is byte-identical) and #4's code stays VERIFIED-as-a-function.
+
+### L23 — RESOLVED (7585a41): CLI multi-module entry added (option a). I verified:
+integration-eng took option (a): `--input nargs="+"` with `default=["src/sample/payroll.cob"]`. Routing
+verified — len==1 → `migrate(cobol_path=...)` (single-file BYTE-IDENTICAL path, incl. the no-arg default
+which parses to a 1-element list); len>1 → `migrate(cobol_paths=...)` (multi-module). Only agent.py changed;
+server.py + the web live path are deliberately UNTOUCHED (the UI demo stays single-file — the honest split
+I asked for). 146 green. So #4 now has a real product entry point (CLI). HONEST CLAIM SHAPE: "the CLI runs
+whole-codebase (`--input a.cob b.cob copybook.cpy`); the UI demo is single-file." NOTE: server.py untouched
+means the SAFETY-NET in server.py (fetch payroll.py → diff → oracle pytest) is single-module — a multi-file
+CLI run produces the entrypoint module + cross-module rules, but its oracle is only as strong as whatever
+golden it diffs (golden_io.json is payroll single-module). So a multi-MODULE equivalence CLAIM still needs a
+multi-module golden; the cross-module RULE-RECOVERY is the demonstrable part. #4 remaining live gap (qa): a
+real cross-module rule from a 2+-file CLI run.
+
+## L24 — CORRECTION to my own L22: the current thinking shape is NOVEL vs the live-proven set → thinking is RE-OPENED (genuinely open, must re-test the EXACT current shape)
+
+- **Self-catch (the discipline I hold others to applies to me).** In L22 I leaned on memory
+  [[thinking-level-rejected-live]] to call thinking a "verified graceful no-op." But that memory tested
+  `agent_config={"thinking_config":{...}}` and `agent_config={"generation_config":{...}}` (NESTED
+  sub-configs) → all 400. The CURRENT code (de85409) sends a DIFFERENT, more-correct shape:
+  `agent_config={"type":"dynamic","thinking_level": level}` — a FLAT thinking_level on a
+  `DynamicAgentConfigParam`. That exact shape is NOT in the memory's tested set.
+- **SDK structural check (I verified):** `BaseCreateAgentInteractionParams` has `agent: Required` AND
+  `agent_config: AgentConfig` (= Union[DynamicAgentConfigParam, DeepResearchAgentConfigParam]) as
+  SIBLINGS — so `agent_config` is a valid co-param with a registered `agent=` (not a client-side
+  ValueError like the typed-kwarg path). `DynamicAgentConfigParam` is `total=False, extra_items=object`,
+  so `thinking_level` rides as an extra item. CONSEQUENCE: the SDK will SEND this call (no local reject);
+  whether the managed-agent BACKEND honors it, ignores it, or 400s is GENUINELY UNKNOWN and was NOT
+  proven by the prior session. (Open sub-question: does sending a `dynamic` agent_config alongside a
+  REGISTERED custom agent "lazarus" conflict server-side?)
+- **Verdict: thinking_level RE-OPENED — HOLD, genuinely open (not "verified no-op").** qa must re-test
+  with the EXACT current shape on the real key and report ONE of:
+  * ACCEPTED: `usage.total_thought_tokens` CHANGES minimal vs high (+ ideally `thought` blocks on the
+    STREAM, since get() flattens them) → Feature 2 is VERIFIED WORKING (a real upgrade).
+  * REJECTED (HTTP 400 / silently ignored — tokens identical minimal vs high) → confirmed graceful no-op,
+    and `_looks_like_thinking_rejection` must catch the actual error (it currently keys on
+    "agent_config"/"unknown field"/"invalid argument" — confirm the real 400 message matches, else the
+    flag would crash the run instead of no-op'ing). Either outcome is shippable IF the docs match it; what
+    I will NOT accept is asserting a verdict from the OLD memory's different-shape result. My L22 "verified
+    no-op" is WITHDRAWN pending this re-test.
+
+### L24 — RESOLVED (872f190): qa live-tested the exact shape — ACCEPTED-but-IGNORED, now labeled honestly
+qa ran the current agent_config={"type":"dynamic","thinking_level":X} on the real key (the THIRD outcome,
+not the binary I posed): the runtime ACCEPTS it (no 400) but SILENTLY IGNORES the depth — thought-token
+counts do NOT track the requested level (high ≈ minimal, often fewer). 872f190 relabels the live trace to
+exactly that ("the agent runtime ACCEPTS the param but does NOT honor depth: thinking runs at the default
+and thought-token counts don't track the level") with ZERO implication of control; the thought-token line
+is now "evidence the agent THOUGHT, not that the level applied"; the THINKING_REJECTED branch is documented
+as defensive-only (not the observed behavior). I VERIFIED on the code: flag-OFF stays byte-identical (no
+agent_config); the ON trace makes no false claim; 145 green.
+THINKING_LEVEL VERDICT: HONEST + shippable as "documented knob tried, runtime ignores it, trace says so" —
+NOT a working depth control. Sign-off conditions: (1) trace/docs imply ZERO control [MET]; (2) qa attach
+the raw minimal-vs-high token numbers as the empirical receipt [pending]. STRONG honesty outcome — a
+non-working capability surfaced truthfully rather than hidden.
+
+### L24 — RECEIPT IN HAND → THINKING #2 FULLY VERIFIED (accepted-but-ignored, honestly labeled)
+qa's raw token numbers (interleaved samples, identical prompt, recorded in memory thinking-level-rejected-live):
+the SHIPPED shape `agent_config={"type":"dynamic","thinking_level":X}` returns status=completed, NO error
+(ACCEPTED), but **high mean ≈ 2096 thought tokens vs minimal mean ≈ 2408 — high produced FEWER than minimal**
+(the OPPOSITE of an honored level; the spread is run-to-run noise on the default). So the level is genuinely
+NOT honored. Thinking DOES happen at the default (total_thought_tokens ~1000-2000 trivial; 21122 on a full
+grounded migration). `thought` blocks appear only on the STREAM (get() flattens to model_output) — read them
+off the stream. I confirmed on SHIPPED HEAD: the ONLY thinking marker is the honest one ("ACCEPTS the param
+but does NOT honor depth…"); the bare false `[thinking_level=high]` marker count is 0; flag-off byte-identical;
+146 green. NOTE: because the shape is accepted (never 400s), the THINKING_REJECTED fallback is dead code in
+practice — correctly documented as defensive-only insurance.
+**FEATURE 2 VERDICT: VERIFIED HONEST.** It is a truthfully-labeled accepted-but-ignored knob, NOT depth
+control, backed by real interleaved-sample token numbers. Sign-off conditions both MET. Only residual: no
+README/UI/DEMO line may imply thinking-depth control (DEMO_SCRIPT.md:54 "Pin thinking level" still needs the
+reword — flagged to team-lead).
+
+## L25 — GROUNDING (#1) honesty nuance: in grounding mode the agent MOSTLY compiled cobc live, barely web-researched — claim must not overstate causal contribution
+
+- **What the grounding-mode run ACTUALLY did (from qa_capture_ground.out.txt narration, ~58 step intents):**
+  only 2 are genuine WEB-search intents ("search the web for PAYROLL.COB", "search for COBOL display
+  formats and de-editing rules"); ~3 more "search" mentions are FILESYSTEM searches (not web). Meanwhile
+  ~49 mentions are install-micromamba / install-gnucobol / compile-cobc / generate-its-own-golden. So even
+  with LAZARUS_GROUND=1, the agent OVERWHELMINGLY solved the task by compiling the original COBOL live and
+  empirically capturing outputs — NOT by web research. This also explains the ZERO `SOURCE:` citations
+  (L17-adjacent): the agent barely used the web, so it had little to cite.
+- **Why this matters for the claim (not the code):** the grounding preamble says "research the idiom via
+  google_search/url_context BEFORE forging." On this task that is NOT what predominantly happened — the
+  agent's path was empirical (compile+run), which is arguably the BETTER engineering choice but is NOT
+  "grounded research drove the migration." Demoing/claiming "web-grounding researches the dialect before
+  forging" would OVERSTATE grounding's causal role on this sample. Honest framing: "with grounding on, the
+  agent MAY consult google_search/url_context for an unfamiliar idiom (and we surface 🔎/🌐 + grounding_tool_
+  count when it does); on the payroll sample it mostly verified empirically by compiling the original COBOL."
+- **Verdict: NOT a code defect — a CLAIM-SCOPING finding.** Two things for sign-off: (1) qa STILL must show
+  the histogram/grounding_tool_count so we know whether the 2 web-search intents even FIRED as
+  google_search_call steps (if count==0, grounding did NOT fire at all on this run and #1 is unproven-live
+  despite the flag); (2) whatever the count, the demo/README must frame grounding as an OPPORTUNISTIC
+  consult, not the driver of the migration. If qa picks a sample with a genuinely obscure idiom (where the
+  agent CAN'T just compile its way out), grounding's value would show more clearly — worth trying for a
+  stronger #1 proof.
+
+## L26 — RECONCILE: function_call/function_result blocks appeared LIVE (4 each) vs RESEARCH §3 "function_calling not supported" — needs the actual tool NAMES before I confirm "internal routing"
+
+- **Apparent contradiction:** qa reports 4 function_call + 4 function_result step blocks on a live run.
+  RESEARCH §3 quotes the antigravity doc verbatim: *"file_search, computer_use, google_maps, function_calling
+  and mcp are not yet supported."* How do function_call blocks appear if function_calling "isn't supported"?
+- **Resolution (almost certainly correct, but MUST be checked against the data, not assumed):**
+  "function_calling not supported" = the USER cannot register their own custom functions for the agent to
+  call (the user-facing feature). It does NOT mean the runtime never emits the `function_call` STEP TYPE. The
+  agent's OWN internal tools can be surfaced over the generic function_call/function_result envelope. SDK
+  evidence: `FunctionCallStep.name` = "the name of the TOOL to call"; `FunctionResultStep.name` = "the name
+  of the TOOL that was called" + call_id + is_error. code_execution / google_search / url_context each have
+  their OWN dedicated step types, so function_call is the generic envelope for whatever lacks a bespoke type.
+- **WHAT I REQUIRE BEFORE WRITING THIS INTO DOCS (the L16 discipline, inverted — don't wave "benign"
+  through either):** I will NOT assert "internal tool routing, not user-exposed function calling" on a
+  relayed conclusion — I have not SEEN the blocks. qa must paste the 4 function_call `name` + `arguments`
+  values (and function_result `name`s). Branches:
+  * names = INTERNAL ops (filesystem/list/read/search-ish; no user-registered function) → CONFIRMS internal
+    routing; our docs stay accurate (we never claimed user function-calling). Add ONE honest clarifying line.
+  * names look like USER/CUSTOM functions, or LAZARUS appears to register tools → CONTRADICTS §3 + our
+    "explicitly not used" claim → STOP, escalate, fix the claim.
+- **Until I see the names: provisional read = internal routing (consistent), but UNCONFIRMED.**
+
+### L26 — LOAD-BEARING HALF CONFIRMED BY ME (independent of seeing the names): LAZARUS registers ZERO user functions
+I verified our code never passes `tools=` / `functions=` / `function_declarations` to `agents.create` OR
+`interactions.create` (grep clean; ensure_agent omits tools → defaults to code_execution+google_search+
+url_context). Therefore ANY function_call block that fired live CANNOT be user-registered function-calling —
+it is necessarily the RUNTIME's OWN internal tool envelope. So the honesty-load-bearing claim — "LAZARUS does
+NOT use user-facing function calling; RESEARCH §3 'function_calling not supported/used' stays accurate" — is
+TRUE regardless of what the internal tool names are. The specific names (qa to paste) only refine an optional
+doc line. ALSO: integration-eng added an honest function_call/function_result breadcrumb (working tree, cites
+this L26) that SURFACES the tool name in the trace ("🛠 <name> <args>") so the names are auditable live — good
+instrumentation, regression-safe (display-only, flags-off kwargs unchanged, 149 green).
+**L26 VERDICT: the function_call blocks do NOT contradict §3 — our claim holds (we register no functions; the
+envelope is the runtime's internal routing). Optional doc line + qa's name list would make it airtight, but
+the claim is already safe to keep. Reconciliation CLEARED at the load-bearing level.**
+
+## L27 — RELAYED "VERIFIED" ≠ EVIDENCE I'VE SEEN: #1 and #3 live proofs are NOT on my filesystem yet
+team-lead relays qa's #1 grounding=VERIFIED (real google_search_call/result blocks) and #3=VERIFIED
+(sentinel-token fresh-run discovery). My gate requires the BLOCKS, not the conclusion. As of this writing the
+ONLY artifact on my box is qa_capture_ground.out.txt (model-output text only — the inconclusive one from
+L17/L25; it has 0 google_search prose detail and no histogram). I have NOT seen: the google_search_call
+histogram/grounding_tool_count, the sentinel-token discovery transcript, or the function_call names.
+- #3 cross-run: the sentinel-token fresh-run discovery IS exactly the proof I asked for AND it matches the
+  prior live memory [[skill-mount-discovery-live]] (ZARFLAX-7731) — so I can accept #3's DISCOVERY half on
+  that corroboration. Residual: the BANKING half (agent echoes the SKILL.md body on a real forge so
+  _bank_forged_skill_from_output captures it) — confirm that fired, or state banking is mechanism-verified
+  (my drive) + discovery-verified (sentinel) with the echo dependency noted.
+- #1 grounding: I need the actual google_search_call block(s) + grounding_tool_count to move it to VERIFIED.
+  A relayed "qa captured real blocks" is encouraging but is not the receipt; given L25 (the agent mostly
+  compiles rather than searches on payroll), I specifically need to see count>0 with the tool name.
+**Verdict: #2 + #4(code/CLI) + regression are mine-verified; #1, #3-banking, and the L26 function_call
+reconciliation are RELAYED-but-unseen → I hold those until the raw blocks land on my filesystem (or qa pastes
+them).** Not distrust of qa — it's the difference between "told" and "verified," which is the whole job.
+
+## L28 — THINKING 400-vs-200 CONFLICT: almost certainly an SDK-VERSION provenance issue (1.73.1 vs pinned 2.6.0). Settle with one probe of the EXACT committed shape on 2.6.0.
+
+- **The conflict:** qa's direct messages say the runtime HARD-REJECTS (400) EVERY thinking shape (generation_config,
+  extra_body variants, "agent_config nestings", top-level kwarg) — "tested live just now." team-lead's correction +
+  memory [[thinking-level-rejected-live]] say the COMMITTED shape `agent_config={"type":"dynamic","thinking_level":X}`
+  returns 200 (accepted) and is SILENTLY IGNORED (high≈minimal tokens) — NOT 400.
+- **Two reasons these likely DON'T actually contradict:**
+  1. SHAPE: qa's list says "agent_config NESTINGS" → 400. The committed shape is NOT a nesting — thinking_level is a
+     FLAT key on a `{"type":"dynamic"}` config. qa's probe may simply not have included the exact flat-dynamic shape.
+  2. SDK VERSION (the bigger one): team-lead notes the "every shape 400" checks were on **google-genai 1.73.1**;
+     the shipped code PINS `>=2.6.0,<3.0.0` (requirements.txt; my env = 2.6.0). 1.73.1 predates the agent
+     interactions surface (it's below even the 2.0.0 step.* floor) — its class names/wire shapes differ, so a 400
+     there says nothing about 2.6.0. This is the [[captures-need-commit-provenance]] lesson applied to SDK version:
+     a probe only proves things about the SDK it ran on.
+- **WHY THE LABEL DIFFERS (and why I won't sign off until it's settled on 2.6.0):**
+  * If the committed flat shape 400s on 2.6.0 → honest label = "rejected → graceful no-op," THINKING_REJECTED is LIVE.
+  * If it returns 200-but-ignored on 2.6.0 → honest label = "accepted but depth NOT honored (silently ignored),"
+    and THINKING_REJECTED is effectively DEAD CODE (correctly documented as defensive-only).
+  Both yield the SAME user-facing honesty claim ("no thinking-depth control; thinking runs at default") — so the
+  MERGE is not blocked on which one it is, BUT the README/verdict/trace WORDING must match the real mechanism, and a
+  judge could probe it. The shipped trace already says "ACCEPTS the param but does NOT honor depth," which matches the
+  200-ignored reading; if it's actually 400 on 2.6.0, that trace line is wrong and must change.
+- **THE SETTLING PROBE (asked of qa):** on `google-genai==2.6.0` (the pin), send `client.interactions.create(
+  agent="lazarus", input="hi", agent_config={"type":"dynamic","thinking_level":"high"}, ...)` and paste the RAW
+  result: HTTP status (200 vs 400), and if 200, total_thought_tokens for high vs minimal. + the SDK version printed.
+- **Verdict: FEATURE 2 label HELD until qa probes the EXACT committed shape on 2.6.0.** Provisional (and most
+  likely): accepted-but-ignored on 2.6.0 (matches memory + the shipped trace). The user-facing "no depth control"
+  claim is safe either way; the precise mechanism wording + the THINKING_REJECTED-dead-code question hinge on the
+  probe. This is the one fact qa and I must AGREE on before I sign #2 (per team-lead's explicit ask).
+
+## L25/L26 — INSTRUMENTATION LANDED (7ad5de2), verified by me — exactly the receipts I asked for
+integration-eng's 7ad5de2 added the observability I requested, honestly framed (no behavior change; 149 green;
+flags-off byte-identical confirmed):
+- L25 grounding count: when grounding is ON, end-of-run emits `[grounding_tool_count=N (google_search=.., 
+  url_context=..) — web-grounding fired this run; an opportunistic consult, not the migration driver]` for N>0,
+  or `[grounding_tool_count=0 — web-grounding was ENABLED but did NOT fire this run (the agent solved it without
+  web research)]` for N==0. This is the histogram/count I needed — AND it honestly reports 0 (can't accidentally
+  claim grounding fired when it didn't). Gated on `ground_on` → grounding OFF prints nothing (byte-identical).
+- L26 function_call breadcrumb: `🛠 <name>` surfaces the internal tool name live (auditable).
+So on qa's NEXT grounding run the count prints in-band — #1's receipt is now self-producing. My L25 honesty
+framing ("opportunistic consult, not the driver") is baked into the trace string verbatim. Good.
+
+---
+
+# ===== DEVIL'S-ADVOCATE SIGN-OFF CRITERIA (the exact gate) =====
+
+CLEARED (mine-verified, not relayed):
+- [x] REGRESSION: all flags OFF byte-identical to main — _build_prompt, _build_forge_retry_prompt,
+      build_base_environment, interaction kwargs {agent,extra_body,input,stream} (no agent_config/
+      generation_config), ensure_agent clean-fork no-op, grounding_tool_count gated off. (re-verified each HEAD)
+- [x] FALSIFIABILITY: server.py / differential_oracle.py / event_transform.py UNTOUCHED on the branch →
+      verdict tracks the oracle, not the agent; the 4 falsifiability tests pass.
+- [x] NO unsupported-surface reach: we register ZERO user functions/tools (L26) → function_call blocks are
+      runtime-internal routing, §3 "function_calling not used" holds. No structured-output/mcp/file_search/
+      computer_use/sub-agents. No model-vs-agent capability conflation.
+- [x] SUITE green & deterministic (154 at last check), incl. the real-SDK breadcrumb guard (L17).
+- [x] #4 whole-codebase: code + CLI entry verified (L23 opt-a); honest scope caveat recorded (recovery
+      showcase, NOT oracle-byte-verified — single-module golden).
+- [x] #2 thinking USER-FACING claim: "no depth control; thinking runs at default" is honest; shipped trace
+      makes zero control implication; bare false [thinking_level=X] marker is gone.
+- [x] Honesty instrumentation (grounding count, 🛠 names) landed, gated, honestly framed.
+
+PENDING (RELAYED → must become SEEN before I sign; all are qa live receipts I can't self-produce):
+- [ ] L28: qa probes the EXACT committed shape agent_config={"type":"dynamic","thinking_level":"high"} on
+      google-genai 2.6.0 (the pin) → raw HTTP status (200 vs 400) + high-vs-minimal thought tokens + version
+      string. Locks the #2 MECHANISM wording (accepted-but-ignored vs rejected; THINKING_REJECTED live/dead).
+      [merge not blocked on which; wording must match]
+- [ ] #1 grounding: one live run's [grounding_tool_count=N ...] line with N>0 (or an honest N==0 stated).
+- [ ] #3 cross-run BANKING half: a forge run where the agent echoes the SKILL.md body → banked
+      .agents/skills/<name>/SKILL.md on disk (discovery half already accepted: sentinel == prior ZARFLAX live).
+- [ ] #4: the PAYMAIN→TAXSUB cross-module LAZARUS_RULE text + which golden the oracle used.
+
+DOCS PASS (team-lead owns, post-verdict): DEMO_SCRIPT:54 "pin thinking level" reword; README:83 cross-run
+framing; grounding-is-opportunistic (L25) line; "#4 is CLI/API, web is single-file" note; function_call-
+envelope honesty line (L26); #2 wording = accepted-but-ignored (NOT "400 rejected"), pending L28.
+
+When the 4 PENDING boxes are checked from evidence I've SEEN, I issue FULL per-feature sign-off and the merge
+of feature/agent-capabilities → main is cleared.
+
+## L29 — SYSTEMIC: SDK-version provenance has bitten the team TWICE (1.73.1 vs pinned 2.6.0). EVERY live verdict must state the SDK version.
+
+- **Two instances, same root cause:**
+  1. L28 thinking "every shape 400s" — checked on google-genai 1.73.1.
+  2. test_grounding_breadcrumbs_use_real_sdk_types committed COMMENT (f2978cb) claims "*Step ABSENT, *Content
+     real, verified on 1.73.1" — INVERTED for the pin. Ground truth I ran on 2.6.0: *Step EXIST,
+     *Content ABSENT (GoogleSearchCallStep/URLContextCallStep/URLContextResultStep all True; *Content all
+     False). The test still PASSES only because the _sdk() resolver tries both suffixes; the comment is a
+     latent landmine (someone trusting it could drop the *Step candidate → guard silently skips on 2.6.0).
+- **THE BROADER IMPLICATION FOR MY GATE:** the shipped code PINS google-genai>=2.6.0,<3.0.0. ANY live finding
+  run on a different SDK (esp. 1.73.1) is suspect — class names AND wire shapes differ across that major.
+  This now applies to qa's RELAYED #1/#3/#4 "VERIFIED" verdicts too: I must confirm they ran on 2.6.x, not
+  just that "blocks appeared." A google_search_call block on 1.73.1 doesn't prove the 2.6.0 shipped path
+  works. Escalated to team-lead.
+- **GATE RULE (added):** every PENDING live receipt must include the printed `g.__version__` and it must be
+  2.6.x (the pin). No version stamp → not accepted as evidence for the shipped path. This is the
+  [[captures-need-commit-provenance]] discipline extended to SDK version.
+- **Verdict: not a code bug (suite green; resolver robust) — a VERIFICATION-HYGIENE finding that gates the
+  trustworthiness of the relayed live verdicts. Fix: frontend corrects the inverted comment; qa stamps SDK
+  version on all 4 pending receipts.**
+
+## L28 — DEFINITIVELY SETTLED by qa's re-verification: ACCEPTED-BUT-IGNORED on the shipped shape (matches my L24/L28 prediction)
+qa re-ran the SHIPPED `agent_config={"type":"dynamic","thinking_level":<lvl>}` live and RETRACTED their earlier
+"rejected→graceful no-op" verdict: it is ACCEPTED (no 400), depth SILENTLY IGNORED — interleaved identical-prompt
+samples high mean ≈2096 vs minimal mean ≈2408 thought tokens (high < minimal = noise on default). This is exactly
+what I predicted (L24/L28) and matches [[thinking-level-rejected-live]]. The 400s were the OTHER shapes (L29
+version/shape confusion). #2 mechanism = ACCEPTED-BUT-IGNORED, SETTLED. The user-facing "no depth control" claim
+holds; THINKING_REJECTED is confirmed dead code on the shipped shape (defensive-only).
+
+## L30 — Last Feature-2 honesty hole: agent.py docstring (line ~695) still asserts "rejects EVERY thinking config shape (400)" — FALSE for the shipped shape
+- **The hole (qa-flagged + I confirmed on committed HEAD a33324f):** `_looks_like_thinking_rejection`'s docstring
+  says "qa LIVE-PROVED the managed-agent runtime rejects every thinking config shape (400)" and frames the shipped
+  shape as "if THAT is also rejected." But qa's own re-verification (L28 above) proves the shipped type:dynamic
+  shape is ACCEPTED-but-ignored, NOT rejected. So the docstring overclaims "every shape 400s" and tells the wrong
+  story about the shape we actually send. (The OTHER functions' docstrings — lines 728/744/767 — correctly say
+  accepted-but-ignored, so the file is internally contradictory.)
+- **What's ALREADY honest (verified):** no bare `[thinking_level=X]` marker anywhere in src/ or web/ (HOLE 2 from
+  qa = already fixed; the live trace says "ACCEPTS the param but does NOT honor depth"). The rejection test is
+  ALREADY labeled "DEFENSIVE" (HOLE 1 = documented as insurance, not live behavior — acceptable).
+- **Verdict: NEEDS FIX (docstring only, integration-eng lane).** Reword line ~695 to: "The OTHER thinking shapes
+  (top-level generation_config / extra_body variants) 400; the shipped agent_config={type:dynamic,thinking_level}
+  shape is ACCEPTED but the depth is IGNORED (qa live). This heuristic + the retry are DEFENSIVE-ONLY insurance
+  for a future runtime that starts rejecting the param — NOT the observed live behavior." Small, but it's a code
+  comment asserting a now-disproven 'rejects every shape' — must match the accepted-but-ignored reality. This is
+  the LAST Feature-2 honesty item; once it's reworded, #2 is fully honest end-to-end.
+
+### L30 — RESOLVED (b2ba1ed). Verified: docstring no longer claims "rejects every shape (400)"; now reads "The
+OTHER shapes (generation_config/extra_body) 400; the SHIPPED agent_config={type:dynamic,thinking_level} shape is
+ACCEPTED but depth IGNORED (qa live: high≈2096 < minimal≈2408) ... DEFENSIVE-ONLY ... NOT observed live." Honest,
+cites the numbers, labels the heuristic defensive. **Feature 2 CODE/honesty surface FULLY CLEAN now: honest trace,
+corrected docstring, defensive-labeled rejection test, no false marker. Only #2 residual = qa's version-stamped
+token receipt (the docstring already quotes the numbers).**
+
+### L17 / L18 — CLOSED (verified by me on committed HEAD, installed google-genai 2.6.0)
+- L17: _tool_breadcrumb reads arguments.queries/urls (plural) + List[Result] → 🔎/🌐 render; real-SDK guard test present.
+- L18: sends agent_config={"type":"dynamic","thinking_level":lvl} (flat, no nested thinking_config, no generation_config).
+- L16 seeding sub-concern: build_base_environment mounts targets==['.agents/AGENTS.md'] with flag off → byte-identity holds.
+
+### _looks_like_thinking_rejection breadth (integration-eng's review Q) — NOT a blocker
+DEAD CODE on the shipped path (type:dynamic returns 200, no error — L28). Theoretical residual only if the runtime
+ever errors: a TRANSIENT unrelated error containing a matched substring would be swallowed + retried; if the retry
+succeeds (transient cleared) a real error is masked + THINKING_REJECTED falsely set. (The "retry re-raises" defense
+holds only for DETERMINISTIC errors, not transient.) Cheap optional hardening offered (narrow to specific
+agent_config/thinking signatures). Not gating — flagged for the record.
+
+## L29 — RESOLVED with hard evidence from BOTH interpreters: the pin IS satisfied; tests run on 2.6.0
+frontend-eng escalated "installed SDK is 1.73.1, below the >=2.6.0 pin → all our SDK-shape claims verified on the
+wrong version." I ran BOTH interpreters to settle it:
+- `.venv/bin/python` → google-genai 2.6.0 → GoogleSearchCallStep=True, *Content=False
+- system `python3`   → google-genai 1.73.1 → GoogleSearchCallStep=False, *Content=True
+- `pytest` sys.executable = `.venv/bin/python` → THE SUITE RUNS ON 2.6.0.
+CONCLUSION: the .venv HAS the pinned 2.6.0; unit tests + all my L17/L18 static checks ran on 2.6.0 (correct).
+frontend read SYSTEM python3 (1.73.1) — the box has BOTH SDKs under different interpreters; the system one is
+irrelevant. NO provenance gap under "verified on SDK" claims — they're on the pin. Only stray system-python3
+probes (frontend's earlier comment; qa's early "400 every shape") were on 1.73.1. Matches repo memory
+[[sdk-version-provenance-gap]]. Do NOT lower the pin or re-verify on 1.73.1. **L29 resolved: shipped path verified
+on the pinned SDK. The standing gate rule (qa stamp 2.6.x on LIVE receipts) is now ONLY about confirming qa's LIVE
+runs used .venv — the unit tests + my static checks are confirmed on 2.6.0.**
+
+## matcher-breadth (L30 follow-on) — HARDENED + verified (8b0b574, DA opt-a)
+integration-eng took my option (a): _looks_like_thinking_rejection now matches ONLY config-field tokens
+(thinking_level/thinking_config/agent_config/generation_config), dropping the generic phrases ("invalid
+argument"/"not supported"/"unexpected"/"unknown parameter" alone). I verified the narrowing on 2.6.0:
+- REAL errors STILL caught (defensive path intact if the runtime ever rejects): "use agent_config",
+  "Unknown parameter 'generation_config'", "agent_config.thinking_level" → all True.
+- UNRELATED errors now correctly NOT swallowed: "503", "deadline exceeded", "invalid argument:
+  temperature out of range", "rate limit exceeded" → all False.
+So the transient-error-masking risk I flagged is GONE, and the branch (dead on the shipped accepted path) can
+no longer hide a real error if it ever fires. Optional item CLOSED. 154 green. This was the last open
+code-quality note on Feature 2; nothing further on the code side.
+
+## CODE-SIDE GATE: FULLY CLOSED. Only qa's 4 version-stamped (.venv/2.6.x) LIVE receipts remain for full sign-off.
+Every code/honesty/regression item I raised (L16-L30 incl. the optional matcher hardening) is fixed + verified
+on the pinned SDK. The verdict/oracle/falsifiability core is untouched. The merge gate is now PURELY:
+(1) #1 grounding_tool_count>0 line, (2) #3 banked SKILL.md on a forge, (3) #4 PAYMAIN→TAXSUB rule + golden,
+(4) #2 thinking token stamp — each produced via .venv/2.6.x. I sign off the moment those land.

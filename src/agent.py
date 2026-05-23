@@ -50,6 +50,7 @@ agent-authored SKILL.md, which is UNVERIFIED):
 from __future__ import annotations
 
 import argparse
+import os
 import pathlib
 import re
 
@@ -60,6 +61,46 @@ BASE_AGENT = "antigravity-preview-05-2026"   # Gemini 3.5 Flash managed agent (v
 MAX_ITERATIONS = 4                            # hard cap — never loop forever on stage
 
 AGENTS_DIR = pathlib.Path(__file__).resolve().parent.parent / ".agents"
+
+# ---------------------------------------------------------------------------
+# OPT-IN CAPABILITY FLAGS (each DEFAULT OFF — with all flags off the prompt,
+# base_environment, and interaction config are byte-identical to the shipped
+# single-module live path). Read from the environment on every call so the
+# behavior is per-run and unit-testable via monkeypatching os.environ.
+# ---------------------------------------------------------------------------
+#   LAZARUS_GROUND   — web-grounding: research an unknown idiom via
+#                      google_search / url_context BEFORE forging (Feature 1).
+#   LAZARUS_THINKING — interaction-scoped thinking level (Feature 2).
+# Set when the managed-agent runtime rejects an interaction-scoped thinking
+# config (graceful no-op): the driver retries WITHOUT it and records the fact
+# so the UI / operator can see the capability isn't actually supported there.
+THINKING_REJECTED = False
+
+
+def _grounding_enabled() -> bool:
+    """True when web-grounding (Feature 1) is opted in via LAZARUS_GROUND.
+
+    Accepts 1/true/yes/on (case-insensitive). DEFAULT OFF: any other value (or
+    unset) keeps the byte-identical, non-grounded prompt + stream behavior.
+    """
+    return os.environ.get("LAZARUS_GROUND", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+_THINKING_LEVELS = {"minimal", "low", "high"}   # "medium" is the runtime default (no-op)
+
+
+def _thinking_level() -> str | None:
+    """The interaction-scoped thinking level to request, or None to send nothing.
+
+    LAZARUS_THINKING (Feature 2). The shipped path sends NO generation_config and relies
+    on the agent's "medium" default (docs/RESEARCH §3: thinking_level default is "medium").
+    So the DEFAULT VALUE — and "medium" specifically — must keep sending nothing, staying
+    byte-identical to today. We return a level ONLY for a value that genuinely DIFFERS from
+    the default (minimal|low|high). "medium"/"default"/"off"/"none"/unset/unrecognized all
+    return None (no-op, never an error).
+    """
+    raw = os.environ.get("LAZARUS_THINKING", "").strip().lower()
+    return raw if raw in _THINKING_LEVELS else None
 
 # Heuristics for reading the agent's terminal message (the demo also shows this on screen).
 _PASS_RE = re.compile(
@@ -108,17 +149,55 @@ def build_base_environment() -> dict:
     return {"type": "remote", "sources": sources}
 
 
-def ensure_agent(client: genai.Client) -> None:
-    """Create the reusable custom agent once (mounts skills via base_environment).
+# Where we remember which mounted skill set the registered agent was built from, so a
+# FRESH invocation can re-register when the on-disk skill library has changed (Feature 3:
+# cross-run skill accumulation). The registry doesn't report an agent's mounted skills, so
+# we track the fingerprint locally. Lives under .agents/ (gitignored line in .gitkeep dir
+# is fine) — it's a cache, not source of truth.
+_SKILL_FINGERPRINT_FILE = AGENTS_DIR / ".skill_fingerprint"
 
-    Idempotent: skips creation if an agent with AGENT_ID already exists.
+
+def _mounted_skill_fingerprint() -> str:
+    """A stable hash of the skill set build_base_environment() will mount RIGHT NOW.
+
+    Covers each skill's discovery target AND its content (so editing a forged SKILL.md
+    re-registers too), plus AGENTS.md. Sorted for determinism. Used to decide whether a
+    pre-existing agent must be re-registered to pick up newly-forged/changed skills.
     """
+    import hashlib
+    h = hashlib.sha256()
     try:
-        existing = {a.id for a in client.agents.list().agents}
-    except Exception:
-        existing = set()
-    if AGENT_ID in existing:
-        return
+        h.update(b"AGENTS.md\0")
+        h.update((AGENTS_DIR / "AGENTS.md").read_bytes())
+        h.update(b"\0")
+    except OSError:
+        pass
+    for skill_md in sorted((AGENTS_DIR / "skills").glob("*/SKILL.md")):
+        h.update(f"{skill_md.parent.name}\0".encode())
+        try:
+            h.update(skill_md.read_bytes())
+        except OSError:
+            pass
+        h.update(b"\0")
+    return h.hexdigest()
+
+
+def _read_registered_fingerprint() -> str | None:
+    try:
+        return _SKILL_FINGERPRINT_FILE.read_text().strip() or None
+    except OSError:
+        return None
+
+
+def _write_registered_fingerprint(fp: str) -> None:
+    try:
+        _SKILL_FINGERPRINT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _SKILL_FINGERPRINT_FILE.write_text(fp)
+    except OSError:
+        pass  # best-effort cache; a miss just means we may re-register next run
+
+
+def _create_lazarus_agent(client: genai.Client) -> None:
     client.agents.create(
         id=AGENT_ID,
         base_agent=BASE_AGENT,
@@ -129,8 +208,71 @@ def ensure_agent(client: genai.Client) -> None:
     )
 
 
-def _build_prompt(cobol: str) -> str:
-    return (
+def ensure_agent(client: genai.Client) -> None:
+    """Create the reusable custom agent, mounting EVERY .agents/skills/*/SKILL.md into
+    base_environment so a FRESH invocation starts with the accumulated skill library
+    (Feature 3: cross-run skills). Clean-fork stays the default when no skills exist.
+
+    Re-registration on skill change: build_base_environment() already mounts whatever
+    skills are on disk, but a PRE-EXISTING agent was registered with an OLDER skill set
+    and the registry won't tell us which. So we track the mounted-skill fingerprint
+    locally; if the agent exists but the on-disk skill set has CHANGED (a skill was forged
+    or edited since it was registered), we delete + recreate it so the new skill is mounted.
+    When the fingerprint matches, this stays a no-op (idempotent — unchanged behavior).
+    """
+    try:
+        existing = {a.id for a in client.agents.list().agents}
+    except Exception:
+        existing = set()
+
+    current_fp = _mounted_skill_fingerprint()
+    has_forged_skills = any((AGENTS_DIR / "skills").glob("*/SKILL.md"))
+
+    if AGENT_ID in existing:
+        recorded = _read_registered_fingerprint()
+        # Idempotent (unchanged behavior) when nothing skill-related has changed:
+        #   * no forged skills on disk AND no recorded fingerprint -> the shipped clean-fork
+        #     world (the agent has no accumulated skills to miss), OR
+        #   * the recorded fingerprint already matches the current skill set.
+        # Only re-register when forged skills exist whose fingerprint differs from what the
+        # agent was registered with -> a NEW/CHANGED skill the running agent wouldn't have.
+        if recorded == current_fp or (recorded is None and not has_forged_skills):
+            return
+        # Skill set changed since the agent was registered -> re-register to mount it.
+        try:
+            client.agents.delete(id=AGENT_ID)
+        except Exception:
+            pass  # if delete is unavailable, create() below may still upsert; best-effort
+
+    _create_lazarus_agent(client)
+    _write_registered_fingerprint(current_fp)
+
+
+# Opt-in research preamble (Feature 1). Prepended ONLY when grounding is enabled, so
+# the un-grounded prompt stays byte-identical. The Antigravity agent already defaults to
+# google_search + url_context tools (ensure_agent leaves tools at default), so this is a
+# pure instruction change steering the agent to research an unfamiliar idiom and cite it.
+_GROUNDING_PREAMBLE = (
+    "WEB-GROUNDING IS ON. When you hit a COBOL idiom you are NOT certain about, do NOT "
+    "guess and do NOT forge a SKILL.md from memory. FIRST research it: use the "
+    "google_search tool for the idiom (e.g. \"COBOL ROUNDED rounding mode\", "
+    "\"COBOL PIC 9V99 DISPLAY de-editing\") and the url_context tool to read the most "
+    "authoritative source you find (IBM Enterprise COBOL language reference, GnuCOBOL "
+    "docs, ISO COBOL standard).\n"
+    "CITATIONS ARE REQUIRED AND EXPLICIT. For EVERY source you consult, print a line on "
+    "its OWN line, as plain output text (NOT inside a code cell), with the EXACT prefix "
+    "`SOURCE: ` — i.e. `SOURCE: <url> — <one-line fact you took from it>`. Emit at least "
+    "one SOURCE: line per idiom you research, BEFORE you write the skill, and base the "
+    "forged .agents/skills/<idiom>/SKILL.md on those cited findings. If you searched but "
+    "took nothing usable from a page, still record `SOURCE: <url> — (not useful)` so the "
+    "research trail is honest. Grounded research precedes the forge, never replaces the "
+    "byte-for-byte differential oracle.\n\n"
+)
+
+
+def _build_prompt(cobol: str, *, ground: bool = False) -> str:
+    preamble = _GROUNDING_PREAMBLE if ground else ""
+    return preamble + (
         "Migrate this COBOL program to idiomatic Python. Work in the sandbox.\n"
         "1. Recover and print the business rules in plain English.\n"
         "2. Translate to Python and write the final module to /workspace/payroll.py "
@@ -177,15 +319,89 @@ def _build_prompt(cobol: str) -> str:
     )
 
 
-def _build_forge_retry_prompt(skill_path: str) -> str:
+def _render_modules(modules: list[tuple[str, str]]) -> str:
+    """Fence every (name, source) module so the agent sees the whole codebase at once."""
+    blocks = []
+    for name, source in modules:
+        label = name or "module.cob"
+        blocks.append(f"=== {label} ===\n```cobol\n{source}\n```")
+    return "\n\n".join(blocks)
+
+
+def _build_multi_prompt(modules: list[tuple[str, str]], *, ground: bool = False) -> str:
+    """Whole-codebase prompt (Feature 4): migrate a SET of COBOL modules (+ copybooks)
+    together, recovering CROSS-MODULE business rules (shared copybook layouts, a rule split
+    across a caller + its CALLed subprogram, a constant defined in one module and used in
+    another). All modules are presented at once so the agent can reason across them.
+
+    Reuses the single-file marker + oracle contract verbatim (so the live UI's panels work
+    unchanged), but the recover/translate steps are scoped to the whole module set. Used
+    ONLY when migrate() is given >1 file; the single-file path still calls _build_prompt and
+    stays byte-identical.
+    """
+    preamble = _GROUNDING_PREAMBLE if ground else ""
+    names = ", ".join(name or "module.cob" for name, _ in modules)
+    return preamble + (
+        f"Migrate this COBOL CODEBASE ({len(modules)} files: {names}) to idiomatic Python. "
+        "Treat the files as ONE system, not in isolation. Work in the sandbox.\n"
+        "1. CROSS-MODULE RECOVERY: read EVERY module + copybook below and recover the "
+        "business rules across the whole set in plain English — including rules that span "
+        "modules: shared copybook record layouts (COPY), a computation split across a "
+        "calling program and the subprogram it CALLs, constants/88-levels defined in one "
+        "module and relied on by another, and any ordering/lifecycle dependency between "
+        "modules. Print the recovered cross-module rules.\n"
+        "2. Translate to idiomatic, well-structured Python (one cohesive package/module set "
+        "preserving the cross-module structure) and write the primary entrypoint module to "
+        "/workspace/payroll.py (the orchestrator fetches exactly that path).\n"
+        "3. DIFFERENTIAL ORACLE (ground truth = the ORIGINAL COBOL's REAL output):\n"
+        "   - PRIMARY: src/sample/golden_io.json holds real GnuCOBOL outputs captured "
+        "ahead of time. Use these as ground truth. Do NOT try to install a COBOL "
+        "compiler; the diff must not depend on a live compile.\n"
+        "   - LIVE REFRESH: install real GnuCOBOL WITHOUT root via micromamba + conda-forge "
+        "(`micromamba create -p /workspace/cobol -c conda-forge gnucobol`) or use `cobc` if "
+        "present, then compile + run the ORIGINAL COBOL system over the battery to confirm "
+        "golden_io.json is fresh — but the equivalence check stays byte-for-byte.\n"
+        "4. Generate equivalence tests asserting python_output == golden_cobol_output "
+        "byte-for-byte; run pytest.\n"
+        "5. On failure, diagnose the TRUE idiom from the byte diff and write "
+        ".agents/skills/<idiom>/SKILL.md teaching yourself how to handle it, commit it, and "
+        "report the path you wrote. Common COBOL idioms across modules: numeric DISPLAY "
+        "de-editing + `ROUNDED` round-half-UP (use Decimal.quantize(ROUND_HALF_UP), not "
+        "Python round()), REDEFINES, OCCURS DEPENDING ON, sign overpunch, shared COPY "
+        "layouts. Name the skill for the real idiom.\n"
+        "6. EMIT MACHINE-READABLE MARKERS for the live UI. These are REQUIRED, one per "
+        "line, with the EXACT prefix, as plain text in your output (not inside a code "
+        "cell). The UI parses these prefixes verbatim:\n"
+        "   - For EACH recovered rule (emit at least 3, including the CROSS-MODULE ones): "
+        "`LAZARUS_RULE: {\"title\":..., \"plain\":..., \"cobol_ref\":..., "
+        "\"severity\":\"rule|edge_case|gotcha\"}`\n"
+        "   - After running the oracle, exactly ONE line: `LAZARUS_ORACLE_JSON: "
+        "[{\"input\":..., \"cobol\":..., \"python\":..., \"match\":true|false}, ...]` "
+        "covering EVERY golden input.\n"
+        "   - As your FINAL step, print the COMPLETE final payroll.py exactly once, on the "
+        "line `LAZARUS_MODULE:` immediately followed by a single fenced ```python block "
+        "containing the WHOLE entrypoint module verbatim (the same bytes you wrote to "
+        "/workspace/payroll.py) — no elisions, no '...'.\n"
+        "Emit the markers even on a failing iteration (the UI shows RED then GREEN). "
+        "When done, state clearly whether all equivalence tests PASS.\n"
+        f"Stop when tests pass or after {MAX_ITERATIONS} iterations.\n\n"
+        f"COBOL CODEBASE:\n{_render_modules(modules)}"
+    )
+
+
+def _build_forge_retry_prompt(skill_path: str, *, ground: bool = False) -> str:
     """Follow-up prompt for the FORGE retry turn (SAFE re-read pattern).
 
     The forged SKILL.md persists on disk in the reused environment, but we do NOT
     assume it has been auto-reloaded into the agent's instruction context. So we
     explicitly tell the agent to re-read it (and the rest of .agents/skills/) before
     re-attempting the translation.
+
+    When grounding is on, prepend the research preamble so a DIFFERENT unknown idiom
+    surfacing on the retry is researched-then-forged, never guessed.
     """
-    return (
+    preamble = _GROUNDING_PREAMBLE if ground else ""
+    return preamble + (
         "Your previous attempt failed on an unknown COBOL idiom and you forged a new "
         f"skill at {skill_path}.\n"
         "That file is on disk in this SAME environment, but it is NOT yet loaded into "
@@ -219,13 +435,26 @@ def _tool_breadcrumb(step) -> str | None:
     from a dev box): we read the documented Managed-Agents shapes
     (web/STREAM_CONTRACT.md adapter table) but tolerate anything missing —
       * code_execution_call   -> `$ <arguments.code>` (the command/code the agent ran),
-      * code_execution_result -> a short status line (`✗ error` / `✓ ok`) + any result text.
+      * code_execution_result -> a short status line (`✗ error` / `✓ ok`) + any result text,
+      * google_search_call    -> `🔎 <q1; q2>` (arguments.QUERIES is a List[str], plural),
+      * google_search_result  -> `🔎 ✓ <N results>` (result is a List[GoogleSearchResult]),
+      * url_context_call      -> `🌐 <u1; u2>` (arguments.URLS is a List[str], plural),
+      * url_context_result    -> `🌐 ✓ <url (status)>` (result is a List[URLContextResult]),
+      * thought               -> `💭 <summary>` (a thinking-summary block, Feature 2).
+    The field names are the REAL installed-SDK shapes (google.genai._interactions.types:
+    GoogleSearchCallArguments.queries / URLContextCallArguments.urls / GoogleSearchResult.
+    search_suggestions / URLContextResult.status+url) — NOT singular .query/.url, which a
+    real grounding call never sets (that bug rendered nothing for genuine grounding).
+    The grounding/thought breadcrumbs make web-grounding + thinking PROVABLE in the live
+    trace (they only ever appear when those opt-in capabilities are exercised).
     Returns None when the step isn't a tool step or exposes no usable detail, so the caller
     simply emits nothing — breadcrumbs are a live-UX bonus, never required. These breadcrumbs
     feed phase_for_text (server side) so the rail lights recover/translate/oracle/test off
     real tool activity (`cobc`, `pytest`, `payroll.py`) instead of only end-block prose.
     """
     stype = getattr(step, "type", None)
+    if stype is None and isinstance(step, dict):
+        stype = step.get("type")   # tolerate a raw-dict step (defensive; SDK normally types it)
     if stype == "code_execution_call":
         args = getattr(step, "arguments", None)
         code = getattr(args, "code", None) if args is not None else None
@@ -243,7 +472,127 @@ def _tool_breadcrumb(step) -> str | None:
             snippet = " " + result.strip().splitlines()[-1][:160]
         mark = "✗ error" if is_error else "✓ ok"
         return f"{mark}{snippet}".rstrip() or None
+    if stype == "google_search_call":
+        queries = _as_str_list(_step_field(step, "arguments", "queries"))
+        return f"🔎 {'; '.join(queries)[:200]}" if queries else "🔎 (search)"
+    if stype == "google_search_result":
+        results = _as_list(_step_field(step, "result"))
+        n = len(results)
+        return f"🔎 ✓ {n} result{'s' if n != 1 else ''}" if n else "🔎 ✓"
+    if stype == "url_context_call":
+        urls = _as_str_list(_step_field(step, "arguments", "urls"))
+        return f"🌐 {'; '.join(urls)[:200]}" if urls else "🌐 (fetch)"
+    if stype == "url_context_result":
+        return _url_context_result_crumb(step)
+    if stype == "thought":
+        summary = _thought_summary_text(step)
+        return f"💭 {summary[:200]}" if summary else None
+    if stype == "function_call":
+        # The generic tool envelope (DA L26): code_execution/google_search/url_context each
+        # have a bespoke step type, so function_call carries the agent's OTHER internal tools.
+        # Surface the tool NAME (+ short args) so the actual names are visible in the trace —
+        # this is the data needed to confirm it's INTERNAL routing, not user function-calling.
+        name = _step_field(step, "name")
+        args = _step_field(step, "arguments")
+        detail = f" {str(args)[:80]}" if args else ""
+        return f"🛠 {str(name).strip()}{detail}".rstrip()[:200] if name else "🛠 (tool)"
+    if stype == "function_result":
+        name = _step_field(step, "name")
+        is_error = bool(getattr(step, "is_error", False) or (isinstance(step, dict) and step.get("is_error")))
+        mark = "✗" if is_error else "✓"
+        return f"🛠 {mark} {str(name).strip()}".rstrip()[:200] if name else f"🛠 {mark}"
     return None
+
+
+def _step_field(step, *path):
+    """Read a (possibly nested) attr/dict field off a step, tolerating either shape.
+
+    e.g. _step_field(step, "arguments", "queries") reads step.arguments.queries, or
+    step.arguments["queries"] — returning None on any miss. Lets the grounding breadcrumbs
+    work whether the SDK surfaces typed objects or raw dicts.
+    """
+    obj = step
+    for key in path:
+        if obj is None:
+            return None
+        nxt = getattr(obj, key, None)
+        if nxt is None and isinstance(obj, dict):
+            nxt = obj.get(key)
+        obj = nxt
+    return obj
+
+
+def _as_list(val):
+    """Normalize a value into a list (SDK result fields are List[...]); None/scalar -> []/[v]."""
+    if val is None:
+        return []
+    if isinstance(val, (list, tuple)):
+        return list(val)
+    return [val]
+
+
+def _as_str_list(val) -> list[str]:
+    """A list of non-empty stripped strings from a List[str] field (queries/urls)."""
+    return [s.strip() for s in (str(x) for x in _as_list(val)) if s.strip()]
+
+
+def _url_context_result_crumb(step) -> str:
+    """`🌐 ✓ <url> (<status>); …` from a url_context_result step.
+
+    result is a List[URLContextResult] where each item carries .url + .status (the real
+    SDK shape). Best-effort: shows the first couple of fetched URLs + their status.
+    """
+    results = _as_list(_step_field(step, "result"))
+    if not results:
+        return "🌐 ✓"
+    parts = []
+    for item in results[:2]:
+        url = _step_field(item, "url")
+        status = _step_field(item, "status")
+        if url and status:
+            parts.append(f"{str(url).strip()} ({str(status).strip()})")
+        elif url:
+            parts.append(str(url).strip())
+    detail = "; ".join(parts)
+    return f"🌐 ✓ {detail}"[:200] if detail else f"🌐 ✓ {len(results)} fetched"
+
+
+def _thought_tokens(interaction) -> int | None:
+    """usage.total_thought_tokens off a (completed) interaction, or None if absent.
+
+    The data model exposes usage.total_thought_tokens (gemini-interactions-api skill); we
+    read it best-effort (attr OR dict). A positive value is evidence the agent THOUGHT — but
+    NOT evidence the requested thinking_level applied (qa live: the count does not track the
+    requested depth; the runtime accepts the param but ignores it). A missing field never errors.
+    """
+    usage = getattr(interaction, "usage", None)
+    if usage is None and isinstance(interaction, dict):
+        usage = interaction.get("usage")
+    if usage is None:
+        return None
+    tok = getattr(usage, "total_thought_tokens", None)
+    if tok is None and isinstance(usage, dict):
+        tok = usage.get("total_thought_tokens")
+    try:
+        return int(tok) if tok else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _thought_summary_text(step) -> str:
+    """Join the text parts of a `thought` step's summary (verified §8 shape:
+    thought -> {type, summary:[{type:"text", text}], signature}). Best-effort."""
+    summary = getattr(step, "summary", None)
+    if summary is None and isinstance(step, dict):
+        summary = step.get("summary")
+    parts = []
+    for part in (summary or []):
+        text = getattr(part, "text", None)
+        if text is None and isinstance(part, dict):
+            text = part.get("text")
+        if text:
+            parts.append(text)
+    return " ".join(parts).strip()
 
 
 def extract_output_text(interaction, client: genai.Client | None = None) -> str:
@@ -299,6 +648,145 @@ def _forged_skill_path(output_text: str) -> str | None:
     return m.group(1) if m else None
 
 
+# A forged skill's body, if the agent echoed it in a fenced block right after announcing the
+# path (so we can BANK it locally). Tolerant: matches ```...``` (any/no language tag).
+_SKILL_BODY_RE = re.compile(r"```[a-zA-Z]*\n(.*?)```", re.S)
+
+
+def _persist_forged_skill(name: str, content: str) -> pathlib.Path | None:
+    """Bank a forged SKILL.md into the repo at .agents/skills/<name>/SKILL.md (Feature 3).
+
+    This is what turns a session-scoped forge into a CROSS-RUN skill: once on disk here,
+    ensure_agent() mounts it into base_environment on the next FRESH invocation (and the
+    changed fingerprint triggers a re-register). `name` is sanitized to a safe dir slug.
+    Returns the written path, or None on a bad name / write error (best-effort — banking a
+    skill must never crash a migration).
+    """
+    slug = re.sub(r"[^\w\-]+", "-", (name or "").strip().lower()).strip("-")
+    if not slug or not (content or "").strip():
+        return None
+    try:
+        dest = AGENTS_DIR / "skills" / slug / "SKILL.md"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(content)
+        return dest
+    except OSError:
+        return None
+
+
+def _bank_forged_skill_from_output(skill_path: str, output_text: str) -> pathlib.Path | None:
+    """If the agent echoed the forged SKILL.md body in `output_text`, bank it locally.
+
+    `skill_path` is the announced path (…/skills/<name>/SKILL.md); we derive <name> from it
+    and pull the skill body from the first fenced block following the path mention. No body
+    found -> None (we never invent skill content). Best-effort; cross-run banking is a bonus.
+    """
+    name = pathlib.PurePosixPath(skill_path).parent.name
+    tail = output_text[output_text.find(skill_path) + len(skill_path):]
+    m = _SKILL_BODY_RE.search(tail)
+    if not m:
+        return None
+    return _persist_forged_skill(name, m.group(1).rstrip("\n") + "\n")
+
+
+def _looks_like_thinking_rejection(exc: Exception) -> bool:
+    """Heuristic: did this error come from sending the agent-path thinking config?
+
+    The OTHER thinking shapes (top-level generation_config / extra_body variants) 400 on the
+    agent path; the SHIPPED agent_config={"type":"dynamic","thinking_level": …} shape is
+    ACCEPTED but the depth is IGNORED (qa live: thought-token counts don't track the level —
+    high ≈ 2096 < minimal ≈ 2408). This heuristic + the retry are DEFENSIVE-ONLY insurance for
+    a future runtime that starts rejecting the param — NOT the observed live behavior (the
+    shipped shape returns 200, so this branch is dead on the live path today).
+
+    NARROW BY DESIGN (DA L30 hardening): we require the error message to name the
+    thinking/agent_config FIELD itself — NOT a generic "invalid argument"/"unsupported"
+    phrase alone. Otherwise a TRANSIENT unrelated error (a flaky 503/timeout/rate-limit whose
+    text happens to contain such a phrase) could be swallowed, the retry-without-agent_config
+    could then SUCCEED because the transient cleared, and we'd mask a real error AND falsely
+    set THINKING_REJECTED. Tying the match to a config-field token avoids that.
+    """
+    msg = str(exc).lower()
+    return any(k in msg for k in (
+        "thinking_level", "thinking_config", "agent_config", "agentconfig",
+        "generation_config", "generationconfig",
+    ))
+
+
+def _thinking_agent_config(level: str) -> dict:
+    """The DOCUMENTED agent-path thinking config shape (Feature 2).
+
+    SOURCE OF TRUTH = the installed SDK types (google.genai._interactions.types), NOT the
+    generate_content shape:
+      * The AGENT interaction params (BaseCreateAgentInteractionParams) expose `agent_config`,
+        NOT `generation_config` (which is MODEL-path only). A top-level generation_config
+        kwarg is rejected ("use agent_config"); generation_config in extra_body is rejected
+        ("Unknown parameter"). qa confirmed both live.
+      * `thinking_level` is a FLAT key (interactions GenerationConfigParam.thinking_level —
+        there is NO nested thinking_config in the interactions types), a lowercase Literal
+        ['minimal','low','medium','high'] matching our env values directly.
+      * DynamicAgentConfigParam requires {"type": "dynamic"} and allows extra items
+        (TypedDict total=False, extra_items=object), so the flat thinking_level rides on it.
+
+    HONESTY (qa LIVE FINDING, merge-blocking): the managed-agent runtime ACCEPTS this shape
+    (no 400) but does NOT honor the requested depth — qa measured thought-token counts that do
+    NOT track the level (high ≈ minimal, often FEWER). Thinking runs at the runtime default
+    regardless. So we send the documented param as an honest "we tried the documented knob,"
+    but the trace must NEVER imply the level took effect. See _create_interaction_stream.
+    """
+    return {"type": "dynamic", "thinking_level": level}
+
+
+def _create_interaction_stream(client: genai.Client, *, input_text: str, environment):
+    """interactions.create(stream=True), optionally with the DOCUMENTED interaction-scoped
+    thinking level (Feature 2). DEFAULT (LAZARUS_THINKING unset / medium): sends NO
+    agent_config — byte-identical to the shipped call.
+
+    When a non-default level IS configured we attach the SDK-correct, documented agent-path
+    shape agent_config={"type":"dynamic","thinking_level": <lvl>} (flat thinking_level, NOT
+    generation_config — see _thinking_agent_config). HONEST OUTCOME (qa live): the runtime
+    ACCEPTS the param but does NOT honor depth — thinking runs at the default and thought-token
+    counts don't track the level. So the trace line states exactly that and implies ZERO
+    control. The rejection branch below is a DEFENSIVE fallback only: the shipped shape is
+    accepted (no 400), so it is NOT the observed live behavior — kept in case a future runtime
+    starts rejecting the param. Returns the stream iterator.
+    """
+    base_kwargs = dict(
+        agent=AGENT_ID,
+        input=input_text,
+        stream=True,
+        extra_body={"environment": environment},   # env via extra_body (verified surface)
+    )
+    level = _thinking_level()
+    if level is None:
+        return client.interactions.create(**base_kwargs)
+
+    # Opt-in: send the DOCUMENTED agent-path thinking param (flat thinking_level on agent_config).
+    thinking_kwargs = dict(base_kwargs)
+    thinking_kwargs["agent_config"] = _thinking_agent_config(level)
+    try:
+        stream = client.interactions.create(**thinking_kwargs)
+        # HONEST label (qa live: param accepted but depth NOT honored). Never imply control.
+        emit_to_ui(
+            f"[requested thinking_level={level} — the agent runtime ACCEPTS the param but "
+            "does NOT honor depth: thinking runs at the default and thought-token counts "
+            "don't track the level]\n"
+        )
+        return stream
+    except Exception as exc:
+        if not _looks_like_thinking_rejection(exc):
+            raise  # an unrelated failure — don't swallow it behind the thinking flag
+        # DEFENSIVE fallback (NOT observed live: the shipped shape is accepted, no 400). If a
+        # future runtime DOES reject the documented param, degrade gracefully + flag it.
+        global THINKING_REJECTED
+        THINKING_REJECTED = True
+        emit_to_ui(
+            "[thinking_level rejected by the managed-agent runtime — proceeding without it "
+            f"(requested {level}; defensive path, not the live-observed behavior)]\n"
+        )
+        return client.interactions.create(**base_kwargs)
+
+
 def _run_interaction(client: genai.Client, *, input_text: str, environment):
     """One streamed interaction. Forwards step.delta text to the UI and accumulates the
     model output FROM THE STREAM.
@@ -312,17 +800,21 @@ def _run_interaction(client: genai.Client, *, input_text: str, environment):
     attached as `_lazarus_output_text` and the client attached so extract_output_text can
     do a get() fallback if needed.
     """
-    stream = client.interactions.create(
-        agent=AGENT_ID,
-        input=input_text,
-        stream=True,
-        extra_body={"environment": environment},   # env via extra_body (verified surface)
+    stream = _create_interaction_stream(
+        client, input_text=input_text, environment=environment
     )
 
     completed = None
     interaction_id = None
     env_id = None
     output_parts: list[str] = []
+    # Grounding-activity tally (Feature 1 provability, DA L25): count the REAL grounding tool
+    # STEPS the agent actually fired (google_search_call / url_context_call), counted on
+    # step.start so each call is counted once. Surfaced at end when grounding is ON — a count
+    # of 0 means grounding did NOT fire this run (the agent solved it without the web), which
+    # is the honest signal DA asked for. NOT a claim that grounding drove the migration.
+    ground_on = _grounding_enabled()
+    grounding_calls = {"google_search_call": 0, "url_context_call": 0}
     for event in stream:
         # Every event carries interaction_id (resume/fetch token).
         interaction_id = getattr(event, "interaction_id", None) or interaction_id
@@ -341,6 +833,12 @@ def _run_interaction(client: genai.Client, *, input_text: str, environment):
             crumb = _tool_breadcrumb(step)
             if crumb:
                 emit_to_ui(crumb + "\n")
+            if et == "step.start":
+                stype = getattr(step, "type", None)
+                if stype is None and isinstance(step, dict):
+                    stype = step.get("type")
+                if stype in grounding_calls:
+                    grounding_calls[stype] += 1
             if et == "step.stop":
                 # Terminal text of a completed step (verified §8 carries the full Step here).
                 output_parts.append(_model_output_text(step))
@@ -349,6 +847,32 @@ def _run_interaction(client: genai.Client, *, input_text: str, environment):
             # env id is still present on the (otherwise-empty) completed interaction.
             env_id = extract_environment_id(completed) or env_id
             interaction_id = getattr(completed, "id", None) or interaction_id
+            # Surface thinking token usage (Feature 2) if the runtime reports it. HONEST framing
+            # (qa live): this is evidence the agent THOUGHT, NOT that our requested level applied
+            # — the count does not track the requested depth. No-op when usage/field is absent.
+            tok = _thought_tokens(completed)
+            if tok:
+                emit_to_ui(
+                    f"[thought_tokens={tok} — evidence the agent thought; NOT evidence the "
+                    "requested thinking_level applied (counts don't track the level)]\n"
+                )
+
+    # Grounding histogram (DA L25): when grounding is ON, report how many web-tool calls
+    # ACTUALLY fired. 0 = grounding did not fire this run (agent solved it without the web —
+    # honest, not a defect). >0 = grounding is provably live. Never implies it DROVE the run.
+    if ground_on:
+        gs, uc = grounding_calls["google_search_call"], grounding_calls["url_context_call"]
+        total = gs + uc
+        if total:
+            emit_to_ui(
+                f"[grounding_tool_count={total} (google_search={gs}, url_context={uc}) — "
+                "web-grounding fired this run; an opportunistic consult, not the migration driver]\n"
+            )
+        else:
+            emit_to_ui(
+                "[grounding_tool_count=0 — web-grounding was ENABLED but did NOT fire this run "
+                "(the agent solved it without web research)]\n"
+            )
 
     # Authoritative final fetch: the completed event's payload is empty, so re-fetch the
     # full interaction object when we can. Fall back to the completed event if get() fails.
@@ -382,8 +906,32 @@ def _run_interaction(client: genai.Client, *, input_text: str, environment):
     return final
 
 
-def migrate(client: genai.Client, cobol_path: str):
+def _normalize_cobol_paths(cobol_path, cobol_paths) -> list[str]:
+    """Resolve migrate()'s single-or-multi inputs into an ordered list of paths.
+
+    Accepts the single-file positional (str or pathlib.Path), a list passed positionally,
+    or the cobol_paths= keyword (Feature 4). Exactly one source must be given.
+    """
+    if cobol_paths is not None and cobol_path is not None:
+        raise ValueError("pass either cobol_path or cobol_paths, not both")
+    src = cobol_paths if cobol_paths is not None else cobol_path
+    if src is None:
+        raise ValueError("migrate() requires a COBOL path (or list of paths)")
+    if isinstance(src, (str, pathlib.Path)):
+        return [str(src)]
+    paths = [str(p) for p in src]
+    if not paths:
+        raise ValueError("migrate() got an empty file list")
+    return paths
+
+
+def migrate(client: genai.Client, cobol_path=None, *, cobol_paths=None):
     """Run the write -> run -> prove -> self-heal loop, streaming steps to the UI.
+
+    Single-file (default, UNCHANGED): migrate(client, "path.cob") reads that one module and
+    uses the byte-identical _build_prompt. Whole-codebase (Feature 4): pass cobol_paths=[...]
+    (or a list positionally) to ingest MULTIPLE COBOL files + copybooks at once and recover
+    CROSS-MODULE business rules via _build_multi_prompt.
 
     The MAX_ITERATIONS cap is ENFORCED here in code (C10): a real per-turn counter is
     emitted to the UI via emit_iteration() and the loop hard-stops at MAX_ITERATIONS —
@@ -391,22 +939,30 @@ def migrate(client: genai.Client, cobol_path: str):
     death). State threads across forge->retry turns via environment_id. Returns the
     final completed interaction (carries .id, .environment_id, .steps).
     """
-    cobol = pathlib.Path(cobol_path).read_text()
+    paths = _normalize_cobol_paths(cobol_path, cobol_paths)
     interaction = None
+    ground = _grounding_enabled()   # opt-in web-grounding (Feature 1); default off
+
+    # Single file -> the byte-identical shipped prompt. Multiple -> the cross-module prompt.
+    if len(paths) == 1:
+        first_prompt = _build_prompt(pathlib.Path(paths[0]).read_text(), ground=ground)
+    else:
+        modules = [(pathlib.Path(p).name, pathlib.Path(p).read_text()) for p in paths]
+        first_prompt = _build_multi_prompt(modules, ground=ground)
 
     for iteration in range(1, MAX_ITERATIONS + 1):
         emit_iteration(iteration, MAX_ITERATIONS)   # visible counter (UI renders this)
 
         if iteration == 1:
             interaction = _run_interaction(
-                client, input_text=_build_prompt(cobol), environment="remote"
+                client, input_text=first_prompt, environment="remote"
             )
         else:
             # Reuse the SAME environment so the forged SKILL.md is on disk, and explicitly
             # instruct the agent to re-read it (SAFE pattern; no silent auto-reload).
             interaction = _run_interaction(
                 client,
-                input_text=_build_forge_retry_prompt(_pending_skill_path),
+                input_text=_build_forge_retry_prompt(_pending_skill_path, ground=ground),
                 environment=extract_environment_id(interaction),
             )
 
@@ -417,6 +973,11 @@ def migrate(client: genai.Client, cobol_path: str):
         if not _pending_skill_path:
             # Failed but no new skill was forged -> nothing new to re-read; stop early.
             break
+        # CROSS-RUN banking (Feature 3): if the agent echoed the forged SKILL.md body, write
+        # it into this repo's .agents/skills/ so a FUTURE fresh invocation inherits it (via
+        # ensure_agent mounting it + the changed fingerprint re-registering the agent). The
+        # SAME-environment re-read below is unchanged; banking is an ADDITIONAL durable copy.
+        _bank_forged_skill_from_output(_pending_skill_path, output)
 
     return interaction
 
@@ -437,12 +998,20 @@ def emit_iteration(current: int, total: int) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--input", default="src/sample/payroll.cob")
+    # Feature 4 entry point: --input accepts ONE path (default, single-module, byte-identical)
+    # OR MULTIPLE paths (whole-codebase: modules + copybooks) for cross-module recovery.
+    ap.add_argument("--input", nargs="+", default=["src/sample/payroll.cob"],
+                    help="one COBOL module (default), or several modules + copybooks "
+                         "for cross-module migration")
     args = ap.parse_args()
 
     client = genai.Client()  # reads GEMINI_API_KEY
     ensure_agent(client)
-    result = migrate(client, args.input)
+    # One path -> the single-file default (unchanged); several -> the multi-module path.
+    if len(args.input) == 1:
+        result = migrate(client, cobol_path=args.input[0])
+    else:
+        result = migrate(client, cobol_paths=args.input)
 
     # Persist the environment id so follow-up turns reuse the same sandbox + forged skills:
     env_id = extract_environment_id(result)
