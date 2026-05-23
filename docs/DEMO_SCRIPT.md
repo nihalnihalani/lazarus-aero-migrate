@@ -7,9 +7,11 @@
 >
 > **Measured reality (qa, real key):** an end-to-end live run is **~8–9 minutes** and variable
 > (one run was 19 min before the tarball-gate fix; one was still on iteration 1 at 12+ min). The
-> phase rail advances live and an on-screen **elapsed timer** runs the whole time so the screen is
-> provably alive during the agent's longer silent stretches. Plan the slot accordingly — do **not**
-> promise a finish in two minutes.
+> on-screen **elapsed timer** runs the whole time, the agent trace + `✓ ok` breadcrumbs accrue
+> continuously, and the phase rail completes the full pipeline **in order** — so the screen is
+> provably alive during the agent's longer silent stretches. (The rail beats light as the structured
+> results land, mostly toward the end — it's a correct, complete sequence, not a live beat-by-beat
+> march.) Plan the slot accordingly — do **not** promise a finish in two minutes.
 
 ## Roles during the demo
 - **Driver** (Agent engineer): one machine, sandbox **pre-warmed** (env reused, GnuCOBOL already installed), drops the golden input.
@@ -46,7 +48,7 @@
 - [ ] **Ground truth = `golden_io.json`** (real GnuCOBOL output, captured + verified ahead of time — the falsifiable floor). The demo does **not** depend on a live compile succeeding on stage.
 - [ ] **Pre-warm + reuse the `environment_id`** so 0:00 isn't a cold start; the agent installs GnuCOBOL via micromamba in the reused env to recompile live as an *opportunistic refresh* (verify `cobc --version` after reconnect — but don't narrate a live compile unless it actually fires).
 - [ ] **Pre-start a SECOND live run** before the slot as the cutover target if the on-stage one stalls (latency is variable — budget for it).
-- [ ] **Confirm live-progress surfacing:** the WORKING-banner **elapsed timer ticks** + the phase rail advances during the run (verified on the shipping build — qa saw 23 phase events stream live; the heartbeat ticks 1s and stops on done).
+- [ ] **Confirm live-progress surfacing:** during-run liveness = the WORKING-banner **elapsed timer** (ticks 1s, stops on done) + the agent trace + `✓ ok` breadcrumbs accruing. The **phase rail completes the full pipeline in order** (ingest→recover→translate→oracle→test→forge→reload→done — driven by the ordered structured events, verified on real captured runs), but its beats light as those results land (toward the end), NOT beat-by-beat live — don't narrate it as a live march.
 - [ ] **Golden COBOL module** hand-picked: ~150 lines, one reproducible idiom (decimal/rounding) the model resolves in 1–2 iterations. Rehearse **10×** end-to-end (real timing).
 - [ ] **Hard-cap iterations at 4** with a visible counter.
 - [ ] **Pin** model + thinking level; disable silent auto-retries that can hang.
