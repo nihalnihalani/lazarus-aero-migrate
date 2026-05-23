@@ -487,6 +487,20 @@ def _tool_breadcrumb(step) -> str | None:
     if stype == "thought":
         summary = _thought_summary_text(step)
         return f"💭 {summary[:200]}" if summary else None
+    if stype == "function_call":
+        # The generic tool envelope (DA L26): code_execution/google_search/url_context each
+        # have a bespoke step type, so function_call carries the agent's OTHER internal tools.
+        # Surface the tool NAME (+ short args) so the actual names are visible in the trace —
+        # this is the data needed to confirm it's INTERNAL routing, not user function-calling.
+        name = _step_field(step, "name")
+        args = _step_field(step, "arguments")
+        detail = f" {str(args)[:80]}" if args else ""
+        return f"🛠 {str(name).strip()}{detail}".rstrip()[:200] if name else "🛠 (tool)"
+    if stype == "function_result":
+        name = _step_field(step, "name")
+        is_error = bool(getattr(step, "is_error", False) or (isinstance(step, dict) and step.get("is_error")))
+        mark = "✗" if is_error else "✓"
+        return f"🛠 {mark} {str(name).strip()}".rstrip()[:200] if name else f"🛠 {mark}"
     return None
 
 
@@ -790,6 +804,13 @@ def _run_interaction(client: genai.Client, *, input_text: str, environment):
     interaction_id = None
     env_id = None
     output_parts: list[str] = []
+    # Grounding-activity tally (Feature 1 provability, DA L25): count the REAL grounding tool
+    # STEPS the agent actually fired (google_search_call / url_context_call), counted on
+    # step.start so each call is counted once. Surfaced at end when grounding is ON — a count
+    # of 0 means grounding did NOT fire this run (the agent solved it without the web), which
+    # is the honest signal DA asked for. NOT a claim that grounding drove the migration.
+    ground_on = _grounding_enabled()
+    grounding_calls = {"google_search_call": 0, "url_context_call": 0}
     for event in stream:
         # Every event carries interaction_id (resume/fetch token).
         interaction_id = getattr(event, "interaction_id", None) or interaction_id
@@ -808,6 +829,12 @@ def _run_interaction(client: genai.Client, *, input_text: str, environment):
             crumb = _tool_breadcrumb(step)
             if crumb:
                 emit_to_ui(crumb + "\n")
+            if et == "step.start":
+                stype = getattr(step, "type", None)
+                if stype is None and isinstance(step, dict):
+                    stype = step.get("type")
+                if stype in grounding_calls:
+                    grounding_calls[stype] += 1
             if et == "step.stop":
                 # Terminal text of a completed step (verified §8 carries the full Step here).
                 output_parts.append(_model_output_text(step))
@@ -825,6 +852,23 @@ def _run_interaction(client: genai.Client, *, input_text: str, environment):
                     f"[thought_tokens={tok} — evidence the agent thought; NOT evidence the "
                     "requested thinking_level applied (counts don't track the level)]\n"
                 )
+
+    # Grounding histogram (DA L25): when grounding is ON, report how many web-tool calls
+    # ACTUALLY fired. 0 = grounding did not fire this run (agent solved it without the web —
+    # honest, not a defect). >0 = grounding is provably live. Never implies it DROVE the run.
+    if ground_on:
+        gs, uc = grounding_calls["google_search_call"], grounding_calls["url_context_call"]
+        total = gs + uc
+        if total:
+            emit_to_ui(
+                f"[grounding_tool_count={total} (google_search={gs}, url_context={uc}) — "
+                "web-grounding fired this run; an opportunistic consult, not the migration driver]\n"
+            )
+        else:
+            emit_to_ui(
+                "[grounding_tool_count=0 — web-grounding was ENABLED but did NOT fire this run "
+                "(the agent solved it without web research)]\n"
+            )
 
     # Authoritative final fetch: the completed event's payload is empty, so re-fetch the
     # full interaction object when we can. Fall back to the completed event if get() fails.
