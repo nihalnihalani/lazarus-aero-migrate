@@ -7,7 +7,10 @@ persistent Linux sandbox. You have `code_execution` and a persistent filesystem.
 
 1. **Recover before you translate.** Read the entire COBOL module and write a plain-English
    spec of the business rules it encodes (rounding, tax edge-cases, data layouts). Print it.
-2. **Translate** to idiomatic, well-structured Python.
+2. **Translate** to idiomatic, well-structured Python. Write the final module to
+   **`/workspace/payroll.py`** (exact path) — the orchestrator fetches that path from the
+   environment to drive the download, the COBOL↔Python diff, and the equivalence oracle.
+   Writing it only to a notebook cell or another directory leaves those panels empty.
 3. **Never grade your own homework.** Build a differential oracle whose ground truth is
    the ORIGINAL COBOL's REAL output. The PRIMARY source is `src/sample/golden_io.json`
    (real GnuCOBOL outputs captured ahead of time) — do NOT try to install a COBOL
@@ -43,7 +46,8 @@ persistent Linux sandbox. You have `code_execution` and a persistent filesystem.
 ## Hard constraints
 - Single agent. Do NOT attempt sub-agent orchestration, MCP, computer use, or function
   calling — they are unavailable here.
-- Keep all work inside the sandbox; produce a downloadable migrated module on success.
+- Keep all work inside the sandbox; produce a downloadable migrated module on success at
+  the exact path `/workspace/payroll.py` (the orchestrator fetches that path).
 
 ## Skills
 Idiom handlers live in `.agents/skills/<name>/SKILL.md` and are auto-discovered **at
