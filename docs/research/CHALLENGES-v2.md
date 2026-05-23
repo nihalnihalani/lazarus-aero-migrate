@@ -684,3 +684,23 @@ NET: no overclaim remains; the DEMO_SCRIPT rail line is honest; shipped code pro
 rail (my replay + integration's replay + qa's TestClient all agree). Optional: a fresh
 rehearsal capture from a confirmed-current server would document it, but the order is deterministic.
 L14 CLOSED. ALL findings (L1–L14) now resolved/fixed/retracted — devil's-advocate review complete.
+
+---
+
+## L15 (task #11) — interest.cob golden is GENUINE — independently verified by devils-advocate
+
+Co-owned with qa. I verified the second sample's golden is REAL (not computed/fabricated), zero-key,
+by compiling it MYSELF with cobc 3.2.0 (non-circular — compares committed golden vs a fresh binary,
+not vs the reference .py):
+1. GOLDEN REAL: compiled src/sample/interest.cob with my own cobc 3.2.0; ran all 10 committed
+   golden inputs through MY fresh binary → 10/10 byte-for-byte match (incl. truncation cases
+   9999999.99→0374999.99, 13.33→0000000.49, 1.00→0000000.03, 50000.50→0001875.01).
+2. REFERENCE EQUIVALENT: committed interest.py (Decimal + ROUND_DOWN) → 10/10 match golden.
+3. FALSIFIABLE + DISTINCT IDIOM: a naive round() port FAILS exactly 4/10 — the 4 truncation cases
+   above (round gives 375000.00/0.50/0.04/1875.02). A naive port CANNOT pass → the idiom is real
+   and the OPPOSITE of payroll's ROUND-HALF-UP (payroll naive-round came out too LOW; here too HIGH).
+CONCLUSION: no honesty gap. The golden is genuine real-cobc output; the second sample legitimately
+demonstrates the differential oracle generalizes to a DIFFERENT idiom (not pattern-matching one
+file). The README §2.4 claim ("two samples exercise opposite idioms, each proven against real
+GnuCOBOL, each breaks a naive round() port") is INDEPENDENTLY VERIFIED, not just asserted. Matches
+qa's verification exactly. L15/task#11 CONFIRMED.
