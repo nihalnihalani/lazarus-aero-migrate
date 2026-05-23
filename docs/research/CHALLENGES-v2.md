@@ -1207,3 +1207,24 @@ envelope honesty line (L26); #2 wording = accepted-but-ignored (NOT "400 rejecte
 
 When the 4 PENDING boxes are checked from evidence I've SEEN, I issue FULL per-feature sign-off and the merge
 of feature/agent-capabilities → main is cleared.
+
+## L29 — SYSTEMIC: SDK-version provenance has bitten the team TWICE (1.73.1 vs pinned 2.6.0). EVERY live verdict must state the SDK version.
+
+- **Two instances, same root cause:**
+  1. L28 thinking "every shape 400s" — checked on google-genai 1.73.1.
+  2. test_grounding_breadcrumbs_use_real_sdk_types committed COMMENT (f2978cb) claims "*Step ABSENT, *Content
+     real, verified on 1.73.1" — INVERTED for the pin. Ground truth I ran on 2.6.0: *Step EXIST,
+     *Content ABSENT (GoogleSearchCallStep/URLContextCallStep/URLContextResultStep all True; *Content all
+     False). The test still PASSES only because the _sdk() resolver tries both suffixes; the comment is a
+     latent landmine (someone trusting it could drop the *Step candidate → guard silently skips on 2.6.0).
+- **THE BROADER IMPLICATION FOR MY GATE:** the shipped code PINS google-genai>=2.6.0,<3.0.0. ANY live finding
+  run on a different SDK (esp. 1.73.1) is suspect — class names AND wire shapes differ across that major.
+  This now applies to qa's RELAYED #1/#3/#4 "VERIFIED" verdicts too: I must confirm they ran on 2.6.x, not
+  just that "blocks appeared." A google_search_call block on 1.73.1 doesn't prove the 2.6.0 shipped path
+  works. Escalated to team-lead.
+- **GATE RULE (added):** every PENDING live receipt must include the printed `g.__version__` and it must be
+  2.6.x (the pin). No version stamp → not accepted as evidence for the shipped path. This is the
+  [[captures-need-commit-provenance]] discipline extended to SDK version.
+- **Verdict: not a code bug (suite green; resolver robust) — a VERIFICATION-HYGIENE finding that gates the
+  trustworthiness of the relayed live verdicts. Fix: frontend corrects the inverted comment; qa stamps SDK
+  version on all 4 pending receipts.**
