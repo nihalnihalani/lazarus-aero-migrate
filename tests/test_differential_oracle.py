@@ -205,6 +205,53 @@ def test_reference_payroll_py_matches_golden(repo_root):
 
 
 # --------------------------------------------------------------------------
+# second sample: interest.cob — DIFFERENT idiom (truncation, not rounding).
+# golden is REAL GnuCOBOL output (src/sample/build_samples.sh re-captures it).
+# --------------------------------------------------------------------------
+def test_interest_golden_io_is_wellformed(repo_root):
+    data = oracle.load_golden_fallback(str(repo_root / "src/sample/interest_golden_io.json"))
+    assert data["cases"], "interest_golden_io.json has no cases"
+    assert "REAL" in data["capture_status"]            # honesty bar: not fabricated
+    for case in data["cases"]:
+        assert case["input"] and case["cobol"], "each case needs real input + cobol bytes"
+
+
+def test_reference_interest_py_matches_golden(repo_root):
+    """The reference interest.py (ROUND_DOWN/truncation) must be byte-for-byte equivalent
+    to the captured REAL cobc outputs — proving the truncation idiom is handled."""
+    results = oracle.differential_test_golden(
+        str(repo_root / "src/sample/interest.py"),
+        str(repo_root / "src/sample/interest_golden_io.json"),
+    )
+    failures = [r for r in results if not r["match"]]
+    assert not failures, f"reference interest.py diverges from COBOL: {failures}"
+
+
+def test_interest_sample_is_a_different_idiom_from_payroll(repo_root, tmp_path):
+    """The interest sample must actually TEST something: a naive round()-based port (the
+    payroll-style fix) FAILS the interest diff, because interest.cob TRUNCATES (no ROUNDED).
+    This proves the second sample exercises a genuinely different idiom, not a duplicate."""
+    naive = tmp_path / "interest_naive.py"
+    naive.write_text(
+        "import sys\n"
+        "from decimal import Decimal, ROUND_HALF_UP\n"
+        "RATE = Decimal('0.0375'); CENT = Decimal('0.01')\n"
+        "raw = sys.stdin.readline().strip()\n"
+        "p = Decimal(raw) if raw else Decimal(0)\n"
+        "i = (p * RATE).quantize(CENT, rounding=ROUND_HALF_UP)\n"   # rounds, doesn't truncate
+        "ip = int(abs(i)); fp = int((abs(i) - ip) * 100)\n"
+        "print(f'{ip:07d}.{fp:02d}')\n"
+    )
+    results = oracle.differential_test_golden(
+        str(naive), str(repo_root / "src/sample/interest_golden_io.json"))
+    failures = [r for r in results if not r["match"]]
+    assert failures, "a naive round() port should FAIL the truncation diff (else the sample tests nothing)"
+    # the documented proof cases must be among the failures
+    failed_inputs = {r["input"].strip() for r in failures}
+    assert {"1.00", "13.33", "50000.50"} <= failed_inputs
+
+
+# --------------------------------------------------------------------------
 # prove_equivalence  (PRIMARY path — golden is ground truth, NO compiler needed)
 # --------------------------------------------------------------------------
 def test_prove_equivalence_uses_golden_as_ground_truth(repo_root):
