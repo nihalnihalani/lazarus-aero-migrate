@@ -637,64 +637,169 @@ def test_ensure_agent_reregisters_when_skill_content_edited(agent_mod, tmp_path,
     assert gamma["content"] == "GAMMA v2 (corrected)"
 
 
+# --- cross-run BANKING: persisting a forged skill body into the repo on disk -----------
+def test_bank_forged_skill_writes_body_to_redirected_dir(agent_mod, tmp_path, monkeypatch):
+    """When the agent echoes the forged SKILL.md body in its output, banking writes it under
+    AGENTS_DIR/skills/<slug>/SKILL.md so a fresh invocation inherits it (Feature 3 durable
+    copy). Redirected to tmp -> proves the write lands in AGENTS_DIR (and never the real repo)."""
+    agents_dir = _make_agents_tree(tmp_path, {})   # AGENTS.md + empty skills/
+    _point_agents_dir(agent_mod, monkeypatch, agents_dir)
+
+    skill_path = ".agents/skills/numeric-display-rounding/SKILL.md"
+    output = (
+        "Diagnosed the idiom. FORGED " + skill_path + "\n"
+        "```markdown\n# numeric-display-rounding\nUse Decimal.quantize(ROUND_HALF_UP).\n```\n"
+        "Re-running the oracle."
+    )
+    written = agent_mod._bank_forged_skill_from_output(skill_path, output)
+    assert written is not None
+    assert written == agents_dir / "skills" / "numeric-display-rounding" / "SKILL.md"
+    assert written.read_text().startswith("# numeric-display-rounding")
+    # nothing escaped to the real repo (the path is under the temp AGENTS_DIR)
+    assert str(tmp_path) in str(written)
+
+
+def test_bank_forged_skill_no_body_is_noop(agent_mod, tmp_path, monkeypatch):
+    """No fenced body after the path => banking returns None and writes nothing (we never
+    invent skill content). This is WHY the forge-loop tests with body-less model_text don't
+    pollute the repo."""
+    agents_dir = _make_agents_tree(tmp_path, {})
+    _point_agents_dir(agent_mod, monkeypatch, agents_dir)
+    out = "FAILED unknown idiom. FORGED .agents/skills/x/SKILL.md"  # no ``` body
+    assert agent_mod._bank_forged_skill_from_output(".agents/skills/x/SKILL.md", out) is None
+    assert not (agents_dir / "skills" / "x").exists()
+
+
+def test_migrate_forge_loop_does_not_pollute_real_repo(agent_mod, tmp_path, monkeypatch):
+    """Defense-in-depth: a full forge->retry migrate() whose RED output carries BOTH a skill
+    path AND a fenced body must bank into the redirected AGENTS_DIR, never the real .agents/.
+    Guards against a future test/edit accidentally writing skills into the repo."""
+    agents_dir = _make_agents_tree(tmp_path, {})
+    _point_agents_dir(agent_mod, monkeypatch, agents_dir)
+
+    cobol = _write_cobol(tmp_path, body="IDENTIFICATION DIVISION.\n")
+    red = ("FAILED unknown idiom. FORGED .agents/skills/banked-idiom/SKILL.md\n"
+           "```markdown\nbanked body\n```")
+    client = FakeClient([
+        {"env_id": "env1", "interaction_id": "i1", "model_text": red},
+        {"env_id": "env1", "interaction_id": "i2", "model_text": GREEN},
+    ])
+    agent_mod.migrate(client, str(cobol))
+    # banked into the temp dir, NOT the real repo
+    assert (agents_dir / "skills" / "banked-idiom" / "SKILL.md").read_text().strip() == "banked body"
+
+
 # ==========================================================================
 # 4. WHOLE-CODEBASE INGESTION  (task #8)
 # ==========================================================================
-# Contract: migrate() accepts MULTIPLE COBOL files (+ copybooks); all are mounted /
-# included and the prompt asks for cross-module rule recovery. Single-file stays default.
-def test_multi_module_prompt_includes_all_modules(agent_mod, tmp_path):
-    """When the prompt is built from multiple modules, every module's source appears.
+# Landed contract:
+#   * migrate(client, cobol_path=None, *, cobol_paths=None). Single via the positional
+#     (str|Path), whole-codebase via cobol_paths=[...] OR a list passed positionally.
+#     Passing BOTH, NEITHER, or an EMPTY list raises ValueError (_normalize_cobol_paths).
+#   * _build_multi_prompt(modules: list[(name, source)], *, ground=False) — labels each
+#     module via _render_modules ("=== <name> ===" + cobol fence), asks for CROSS-MODULE
+#     business-rule recovery, reuses the SAME marker/oracle/payroll.py contract.
+#   * Single-file path still calls _build_prompt -> byte-identical to shipped.
+def test_multi_prompt_includes_every_module_source_and_name(agent_mod):
+    """_build_multi_prompt fences each module and LABELS it by name, so the agent sees the
+    whole codebase. Both sources AND both filenames must appear."""
+    a_src = "IDENTIFICATION DIVISION. PROGRAM-ID. ALPHA. MOVE 1 TO WS-A."
+    b_src = "IDENTIFICATION DIVISION. PROGRAM-ID. BETA. CALL 'ALPHA'."
+    prompt = agent_mod._build_multi_prompt([("alpha.cob", a_src), ("beta.cob", b_src)])
+    # both sources present, each in its own labeled fence
+    assert a_src in prompt and b_src in prompt
+    assert "alpha.cob" in prompt and "beta.cob" in prompt
+    # cross-module recovery language is present (the point of Feature 4)
+    low = prompt.lower()
+    assert "cross-module" in low or "cross module" in low
+    assert "codebase" in low or "as one system" in low or "one system" in low
+    # the live-UI contract is preserved (markers + payroll.py target)
+    assert "LAZARUS_ORACLE_JSON" in prompt
+    assert "LAZARUS_MODULE" in prompt
+    assert "/workspace/payroll.py" in prompt
 
-    Assumed contract: a prompt builder accepts an iterable of (name, source) modules,
-    e.g. _build_prompt(cobol) where cobol is the concatenation, OR a dedicated
-    _build_multi_prompt(modules). We probe both and require all sources present.
-    """
-    a_src = "IDENTIFICATION DIVISION. PROGRAM-ID. ALPHA."
-    b_src = "IDENTIFICATION DIVISION. PROGRAM-ID. BETA."
 
-    builder = getattr(agent_mod, "_build_multi_prompt", None)
-    if builder is not None:
-        prompt = builder([("alpha.cob", a_src), ("beta.cob", b_src)])
-    else:
-        # Fallback: the single-file builder over a concatenation (a valid impl choice).
-        prompt = agent_mod._build_prompt(a_src + "\n" + b_src)
-    assert "ALPHA" in prompt
-    assert "BETA" in prompt
+def test_multi_prompt_reports_module_count(agent_mod):
+    """The codebase prompt names the file count so the agent knows the scope."""
+    prompt = agent_mod._build_multi_prompt(
+        [("a.cob", "PROGRAM-ID. A."), ("b.cob", "PROGRAM-ID. B."), ("c.cpy", "01 REC.")])
+    assert "3 files" in prompt or "3 modules" in prompt or "(3" in prompt
 
 
-def test_migrate_accepts_multiple_files(agent_mod, tmp_path):
-    """migrate() ingests >1 COBOL file. Tries the most likely signatures and requires
-    that BOTH module bodies reach the agent's input prompt in a single run."""
+def test_multi_prompt_grounding_additive(agent_mod):
+    """ground=True on the codebase prompt prepends the research preamble without dropping
+    the cross-module body."""
+    prompt = agent_mod._build_multi_prompt(
+        [("a.cob", "PROGRAM-ID. A."), ("b.cob", "PROGRAM-ID. B.")], ground=True)
+    low = prompt.lower()
+    assert "google_search" in low or "url_context" in low
+    assert "cross-module" in low or "cross module" in low
+
+
+def test_migrate_multi_via_keyword(agent_mod, tmp_path):
+    """migrate(client, cobol_paths=[...]) ingests >1 file: both bodies + names reach the
+    agent input, and the cross-module prompt (not the single-file one) is used."""
     a = _write_cobol(tmp_path, "alpha.cob", "IDENTIFICATION DIVISION. PROGRAM-ID. ALPHA.")
     b = _write_cobol(tmp_path, "beta.cob", "IDENTIFICATION DIVISION. PROGRAM-ID. BETA.")
     client = _green_client()
+    agent_mod.migrate(client, cobol_paths=[str(a), str(b)])
 
-    sig = inspect.signature(agent_mod.migrate)
-    params = sig.parameters
-    try:
-        # Preferred: a list param (e.g. cobol_paths=[...]) or a 2nd positional that
-        # accepts a list. Probe a keyword form first, then a positional list.
-        if "cobol_paths" in params:
-            agent_mod.migrate(client, cobol_paths=[str(a), str(b)])
-        elif any(p.kind == p.VAR_POSITIONAL for p in params.values()):
-            agent_mod.migrate(client, str(a), str(b))
-        else:
-            # second positional may accept a list of paths
-            agent_mod.migrate(client, [str(a), str(b)])
-    except (TypeError, FileNotFoundError, ValueError):
-        pytest.skip("migrate() multi-file signature not landed yet")
+    sent = client.interactions.calls[0]["input"]
+    assert "ALPHA" in sent and "BETA" in sent
+    assert "alpha.cob" in sent and "beta.cob" in sent      # labeled by basename
+    assert "cross-module" in sent.lower() or "cross module" in sent.lower()
 
-    assert client.interactions.calls, "no interaction issued"
+
+def test_migrate_multi_via_positional_list(agent_mod, tmp_path):
+    """A list passed positionally is also accepted (cobol_path may be a list)."""
+    a = _write_cobol(tmp_path, "alpha.cob", "PROGRAM-ID. ALPHA.")
+    b = _write_cobol(tmp_path, "beta.cob", "PROGRAM-ID. BETA.")
+    client = _green_client()
+    agent_mod.migrate(client, [str(a), str(b)])
     sent = client.interactions.calls[0]["input"]
     assert "ALPHA" in sent and "BETA" in sent
 
 
+def test_migrate_rejects_both_single_and_multi(agent_mod, tmp_path):
+    """Passing BOTH cobol_path and cobol_paths is a usage error (ValueError)."""
+    a = _write_cobol(tmp_path, "a.cob", "PROGRAM-ID. A.")
+    with pytest.raises(ValueError):
+        agent_mod.migrate(_green_client(), str(a), cobol_paths=[str(a)])
+
+
+def test_migrate_rejects_empty_file_list(agent_mod):
+    """An empty cobol_paths list is a usage error, not a silent no-op."""
+    with pytest.raises(ValueError):
+        agent_mod.migrate(_green_client(), cobol_paths=[])
+
+
+def test_migrate_rejects_no_source(agent_mod):
+    """Neither path nor paths => ValueError (migrate needs a source)."""
+    with pytest.raises(ValueError):
+        agent_mod.migrate(_green_client())
+
+
+def test_migrate_single_via_keyword_one_element_list(agent_mod, tmp_path):
+    """A ONE-element cobol_paths list still goes through the single-file builder (len==1),
+    so a degenerate codebase of one module stays byte-identical to the shipped prompt."""
+    solo = _write_cobol(tmp_path, "solo.cob", "IDENTIFICATION DIVISION. PROGRAM-ID. SOLO.")
+    client = _green_client()
+    agent_mod.migrate(client, cobol_paths=[str(solo)])
+    sent = client.interactions.calls[0]["input"]
+    assert "SOLO" in sent
+    # single-file path: the shipped (non-codebase) prompt — no cross-module framing
+    assert sent.startswith("Migrate this COBOL program to idiomatic Python.")
+    assert "cross-module" not in sent.lower()
+
+
 def test_migrate_single_file_still_default(agent_mod, tmp_path):
-    """Regression: the single-path call keeps the legacy single-module prompt (one COBOL
-    fence, payroll.py target) — multi-module must be additive, not a replacement."""
+    """Regression: the single-path positional call keeps the legacy single-module prompt
+    (shipped opening, one COBOL fence, payroll.py target) — F4 is additive, not a swap."""
     cobol = _write_cobol(tmp_path, body="IDENTIFICATION DIVISION. PROGRAM-ID. SOLO.")
     client = _green_client()
     agent_mod.migrate(client, str(cobol))
     sent = client.interactions.calls[0]["input"]
     assert "SOLO" in sent
+    assert sent.startswith("Migrate this COBOL program to idiomatic Python.")
     assert "/workspace/payroll.py" in sent
+    assert "COBOL CODEBASE" not in sent      # not the multi-module prompt
