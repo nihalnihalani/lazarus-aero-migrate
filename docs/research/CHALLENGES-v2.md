@@ -1394,3 +1394,23 @@ surfacing its own filesystem I/O as typed steps (alongside code_execution + pers
 optional doc line can now name them: "the runtime emits function_call envelopes for its OWN internal tools
 (list_files/read_file/write_file); LAZARUS registers no user functions." L26 fully closed — relayed→SEEN with names.
 Remaining: (c) banked SKILL.md + (d) cross-module rule TEXT = the only open #9 artifacts; both non-blocking.
+
+## L19/L27 #3 BANKING — VERIFIED END-TO-END (receipt c). Cross-run skill library fully closed.
+qa ran a REAL forge interaction (.venv/2.6.0, AGENTS_DIR redirected to a temp dir so it never touched the repo):
+the agent hit an unknown idiom (SIGN IS TRAILING SEPARATE), stated the path .agents/skills/sign-trailing-separate/
+SKILL.md, and ECHOED the complete SKILL.md body in a fenced block. That REAL output flowed through the SHIPPED
+banking path (_bank_forged_skill_from_output → _persist_forged_skill) and a 748-byte SKILL.md with valid YAML
+frontmatter (name: sign-trailing-separate) landed on disk (temp dir, confirmed not the real repo). This answers the
+exact gap I flagged in L19/L27 ("does the live agent ECHO the body so banking captures it, vs disk-only?") — YES,
+the agent's real output matches the path-then-fenced-block shape the parser expects. So banking is proven on REAL
+agent output, not just synthetic unit input. Combined with the ZARFLAX discovery proof ([[skill-mount-discovery-live]]),
+the CROSS-RUN SKILL LIBRARY is VERIFIED END-TO-END: forge+echo → bank-to-disk → (fingerprint change → re-register →
+mount) → fresh-run startup discovery. #3 fully CLOSED.
+
+## #9 STATUS — 3 of 4 artifacts SEEN + version-stamped; only (d) cross-module rule text remains
+(a) grounding 3× google_search_call on a hard idiom — SEEN (L32). (b) function_call names = list/read/write_file
+internal FS ops — SEEN (L26). (c) banking SKILL.md on disk from a real forge — SEEN (this entry). (d) cross-module
+rule TEXT (PAYMAIN→TAXSUB) — qa re-running in foreground (the bg runs got reaped). All four FEATURES already had a
+verdict; these receipts upgrade #1/#3 from strong-indication to SEEN and confirm L26. (d) will finalize the #4
+rule-text receipt but #4's verdict (rule-recovery verified, not oracle-byte-verified) already stands. Nothing in my
+gate is open. **DEVIL'S-ADVOCATE REVIEW REMAINS CLOSED; receipts are confirming, not reopening.**
