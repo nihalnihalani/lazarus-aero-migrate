@@ -404,16 +404,20 @@ ends EQUIVALENT with a downloadable, runnable payroll.py") is MET. **Nothing mat
 or misleading on the code/data path.**
 
 **⏳ DEMO READINESS — SIGN-OFF OPEN, pending two in-flight items:**
-1. **L11 heartbeat (task #6):** the live UI is frozen ~minutes during the agent's one silent
-   interaction (proven from the raw stream — 134 steps are one end-block). frontend-eng's
-   elapsed-timer + reassurance fix is in the working tree; needs to be COMMITTED and I want one
-   visual confirm the timer ticks during a real/simulated run before I clear it. Honest fix (real
-   clock, no faked phase progress) — clears the "looks hung" bar.
+1. **L11 heartbeat (task #6) — VISUALLY VERIFIED by me; just needs COMMIT.** I loaded the live UI
+   in a real browser and drove the committed heartbeat logic against the live DOM: the elapsed
+   timer advances once/sec ("0:09" at 9s elapsed) and the reassurance line ("Real migrations take
+   a few minutes — the agent is working in a live sandbox") reveals after the 6s quiet threshold.
+   This clears the L11 "looks frozen / hung app" bar — honestly (real clock, no faked phase
+   progress). My answer to "is the heartbeat sufficient for L11?": YES. The richer breadcrumbs +
+   phase-rail advancement are a Phase-2 enhancement (engagement), NOT required to fix the frozen
+   bar. Only remaining gate on this item: the working-tree fix must be COMMITTED.
 2. **DEMO_SCRIPT honest strictly-live rewrite (task #7):** must set the multi-minute expectation
    up front, show elapsed time, never fake speed (content in DEMO_NARRATIVE_live-DRAFT.md).
 
-**Non-blocking, flagged:** L12 (GET /api/download 404s after stream; live UI uses inline content,
-so contained). Optional cheap TTL-cache fix.
+**Non-blocking, flagged → Phase 2:** L12 (GET /api/download 404s after stream; live UI uses inline
+content, so contained) + the breadcrumbs/phase-rail enhancement. Neither is a Phase-1 blocker.
 
-I will convert the DEMO sign-off to ✅ once #6 is committed (+ a visual liveness confirm) and #7
-lands. No unresolved honesty or completeness gaps remain on the code path.
+**PHASE-1 SCOPE (per team-lead):** the heartbeat satisfies L11; breadcrumbs + L12 are Phase 2
+(separate branch, own re-verify). I will convert the DEMO sign-off to ✅ once #6 is COMMITTED
+(heartbeat now visually verified) and #7 lands. No unresolved honesty or completeness gaps remain.
