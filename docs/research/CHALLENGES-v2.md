@@ -588,3 +588,21 @@ breadcrumb/phase-rail polish continues per qa.)
 L1–L13 + L12: every item is CONFIRMED, FIXED+verified, or honestly deferred-with-note. Nothing
 open that affects honesty or completeness. Phase-1 shipped + signed off; the only continuing work
 is Phase-2 phase-rail/breadcrumb polish (engagement, not correctness). Sign-off stands.
+
+---
+
+## L12 — confirmed THREE ways (final): real-key live curl 200. + phase-rail run-to-run inconsistency noted
+
+qa's Phase-2 live run (6467773 on 8f1e7ea) completed; they curled its REAL run_id post-stream →
+GET /api/download → HTTP 200, 3031B, real module. So L12 is now confirmed three independent ways:
+(1) my read of the merged _COMPLETED_DOWNLOADS LRU on main, (2) qa's real-server TestClient cycle,
+(3) qa's real-key live run_id curl. Fully closed. That run also reconfirmed completeness (all 10
+types, diff.right == download 3031B, pytest green source=agent_pytest 19 cases, EQUIVALENT).
+
+NEW DATA POINT (phase rail, sharpens the L10 precision note): this 2nd run's live rail was
+ingest→recover→forge→reload→done — DIFFERENT from f9e71470's ingest→oracle→forge→reload→done, and
+still skips translate/oracle/test. So the rail isn't merely over-emitting one phase; it's
+INCONSISTENT run-to-run AND skips beats, because it's prose-driven (end-block) not activity-driven
+(the `✓ ok` breadcrumbs carry no command text). This strengthens the case for the Phase-2 fix
+(broaden + dedup phase_for_text patterns / forward code_execution_call command text). Phase-2 polish,
+not a Phase-1 blocker; sign-off unaffected. Review remains fully closed.
