@@ -1,0 +1,6 @@
+google-genai>=1.0.0
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+sse-starlette>=2.0.0
+pytest>=8.0.0
+# System dependency (installed in the sandbox, not via pip): gnucobol  ->  apt-get install -y gnucobol
