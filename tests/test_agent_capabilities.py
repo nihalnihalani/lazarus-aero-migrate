@@ -403,6 +403,101 @@ def test_grounding_breadcrumbs_tolerate_dict_and_flat_shapes(agent_mod):
         types.SimpleNamespace(type="google_search_call", arguments=None)) == "🔎 (search)"
 
 
+def test_function_call_breadcrumb(agent_mod):
+    """DA L26: the generic function_call envelope (the agent's OTHER internal tools, e.g.
+    list_directory — code_execution/search/url each have a bespoke type) yields a 🛠 <name>
+    breadcrumb so the actual tool NAME is visible in the trace (evidence it's INTERNAL
+    routing, not user function-calling). Name absent -> 🛠 (tool)."""
+    step = types.SimpleNamespace(type="function_call", name="list_directory",
+                                 arguments={"path": "/workspace"})
+    crumb = agent_mod._tool_breadcrumb(step)
+    assert crumb.startswith("🛠 list_directory")
+    # name absent -> placeholder, never None/raise
+    assert agent_mod._tool_breadcrumb(
+        types.SimpleNamespace(type="function_call", name=None, arguments=None)) == "🛠 (tool)"
+    # dict shape tolerated too
+    assert agent_mod._tool_breadcrumb(
+        {"type": "function_call", "name": "read_file"}).startswith("🛠 read_file")
+
+
+def test_function_result_breadcrumb(agent_mod):
+    """DA L26: function_result yields 🛠 ✓ <name> on success and 🛠 ✗ <name> on error
+    (is_error toggles the mark), so the trace shows the internal tool's outcome."""
+    ok = types.SimpleNamespace(type="function_result", name="list_directory", is_error=False)
+    assert agent_mod._tool_breadcrumb(ok) == "🛠 ✓ list_directory"
+    err = types.SimpleNamespace(type="function_result", name="read_file", is_error=True)
+    assert agent_mod._tool_breadcrumb(err) == "🛠 ✗ read_file"
+    # dict shape + missing name still produce a non-None mark
+    assert agent_mod._tool_breadcrumb({"type": "function_result", "is_error": True}) == "🛠 ✗"
+
+
+# --- grounding_tool_count histogram (DA L25) ------------------------------------------
+# When LAZARUS_GROUND is ON, _run_interaction counts google_search_call + url_context_call
+# step.starts and emits a [grounding_tool_count=...] line at the end: total>0 = grounding
+# fired (provably live), total==0 = enabled-but-didn't-fire (honest, not a defect). When
+# grounding is OFF the line is ABSENT (byte-identical preserved).
+def _drive_run_capturing_ui(agent_mod, monkeypatch, *, ground_env, stream_steps):
+    """Run _run_interaction over a stream of (event_type, step_type) tuples, capturing every
+    emit_to_ui string. Returns the joined UI text. Grounding read via env."""
+    captured = []
+    monkeypatch.setattr(agent_mod, "emit_to_ui", captured.append)
+    if ground_env is None:
+        monkeypatch.delenv("LAZARUS_GROUND", raising=False)
+    else:
+        monkeypatch.setenv("LAZARUS_GROUND", ground_env)
+
+    final = types.SimpleNamespace(id="iG", environment_id="envG", steps=[])
+
+    class _Client:
+        class interactions:
+            @staticmethod
+            def create(**kwargs):
+                def _stream():
+                    for et, stype in stream_steps:
+                        yield types.SimpleNamespace(
+                            event_type=et, interaction_id="iG",
+                            step=types.SimpleNamespace(type=stype, arguments=None, result=None))
+                    yield types.SimpleNamespace(event_type="interaction.completed",
+                                                interaction=final, interaction_id="iG")
+                return _stream()
+            @staticmethod
+            def get(interaction_id):
+                return final
+
+    agent_mod._run_interaction(_Client(), input_text="x", environment="remote")
+    return "".join(captured)
+
+
+def test_grounding_tool_count_emitted_when_fired(agent_mod, monkeypatch):
+    """LAZARUS_GROUND on + the stream carries search/url calls => a histogram line reporting
+    the counts (proof grounding fired live)."""
+    ui = _drive_run_capturing_ui(
+        agent_mod, monkeypatch, ground_env="1",
+        stream_steps=[("step.start", "google_search_call"),
+                      ("step.start", "google_search_call"),
+                      ("step.start", "url_context_call")])
+    assert "grounding_tool_count=3" in ui
+    assert "google_search=2" in ui and "url_context=1" in ui
+
+
+def test_grounding_tool_count_zero_when_enabled_but_not_fired(agent_mod, monkeypatch):
+    """LAZARUS_GROUND on but NO web calls in the stream => the honest 'enabled but did NOT
+    fire' line (count 0 is not a defect — the agent solved it without the web)."""
+    ui = _drive_run_capturing_ui(
+        agent_mod, monkeypatch, ground_env="true",
+        stream_steps=[("step.start", "code_execution_call")])
+    assert "grounding_tool_count=0" in ui
+    assert "did NOT fire" in ui or "did not fire" in ui.lower()
+
+
+def test_grounding_tool_count_absent_when_grounding_off(agent_mod, monkeypatch):
+    """LAZARUS_GROUND OFF => NO grounding_tool_count line at all (byte-identical preserved)."""
+    ui = _drive_run_capturing_ui(
+        agent_mod, monkeypatch, ground_env=None,
+        stream_steps=[("step.start", "google_search_call")])
+    assert "grounding_tool_count" not in ui
+
+
 # ==========================================================================
 # 2. THINKING_LEVEL  (task #6, env LAZARUS_THINKING default "medium")
 # ==========================================================================
