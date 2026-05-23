@@ -704,3 +704,12 @@ demonstrates the differential oracle generalizes to a DIFFERENT idiom (not patte
 file). The README §2.4 claim ("two samples exercise opposite idioms, each proven against real
 GnuCOBOL, each breaks a naive round() port") is INDEPENDENTLY VERIFIED, not just asserted. Matches
 qa's verification exactly. L15/task#11 CONFIRMED.
+
+## L15 — CORROBORATION: golden verified GENUINE by THREE independent paths
+1. devils-advocate (me): compiled interest.cob with my own cobc 3.2.0 → committed golden == fresh
+   binary 10/10 (non-circular); naive round() fails 4/10.
+2. qa-verifier: build_samples.sh + independent naive-port falsifiability (4/10).
+3. team-lead: ran build_samples.sh on a cobc-equipped box → committed golden == live cobc AND
+   reference py == live cobc, 10/10 for BOTH payroll + interest. Shipped origin/main d265bbb, 99
+   tests, CI green. Reproducible check: `bash src/sample/build_samples.sh` (read-only).
+No fabricated golden. The second-sample honesty bar holds three ways. Task #11 fully CONFIRMED.
