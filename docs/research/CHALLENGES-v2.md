@@ -457,3 +457,32 @@ content, so contained) + the breadcrumbs/phase-rail enhancement. Neither is a Ph
   "How do you know it's correct?" → "ground truth is the real COBOL's output — captured from real
   GnuCOBOL; the agent also tries to recompile it live in the sandbox to refresh it." Keep it
   truthful to whichever path actually fires on stage. Owner: team-lead/doc-keeper, BEFORE the push.
+
+---
+
+## L13 — RESOLVED (687ca26). FULL DEMO SIGN-OFF GRANTED.
+
+Verified the 687ca26 diff: the Prove beat now says "holds the Python to the original COBOL's real
+GnuCOBOL output — ground-truth bytes captured ahead of time" + "(if the agent recompiles cobc live
+this run, narrate that as an opportunistic refresh — don't assert it if it doesn't fire)"; both Q&A
+answers reworded to "ground truth = the original COBOL's real output captured from real GnuCOBOL;
+verdict tracks that oracle, not our tests; live recompile is an opportunistic refresh, not
+guaranteed"; de-risking checklist states "ground truth = golden_io.json; the demo does not depend
+on a live compile." No remaining claim of a guaranteed live compile producing the on-screen proof.
+Honest and accurate to qa's verified run. L13 CLEARED.
+
+## ✅✅ FINAL SIGN-OFF (devils-advocate, task #4) — BOTH parts GRANTED
+
+- **CODE / DoD ✅** — every panel populates from REAL agent work on a completed real-key live run;
+  verdict tracks the differential oracle, not the agent (wrong/crash → RED, tested + driven by me);
+  diff.right == download (the agent's real runnable module); honest provenance labels; no fabricated
+  data. DoD met.
+- **DEMO ✅** — strictly-live narrative is honest: multi-minute expectation set up front; measured
+  ~8–9 min stated (not "2 min"); elapsed-timer heartbeat (visually verified ticking + stopping on
+  done) keeps the screen provably alive; ground-truth/oracle framing accurate (L13 fixed); guardrails
+  forbid faked speed; mock is break-glass only, labeled. No overclaims remain.
+
+Honesty posture is STRONG and was made stronger by this review (C13/C16 held; oracle falsifiability
+enforced + tested; L13 overclaim caught + fixed pre-push). Phase-2 items (breadcrumbs/phase-rail
+dedup, L12 download-endpoint TTL) are correctly deferred and are NOT blockers. team-lead is clear to
+push main (HEAD 687ca26, 88/88 green).
