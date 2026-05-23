@@ -57,22 +57,40 @@ LAZARUS answers it structurally: the **oracle is the original COBOL program's re
 
 **Fallback if `apt`/network for GnuCOBOL is gated in preview:** ship a pre-computed `golden_io.json` (input→output pairs captured from a real COBOL run before the event) and diff against that. Same guarantee, no live compile.
 
-## 4. Managed Agents configuration
+## 4. Managed Agents configuration (verified against live docs, May 2026)
+
+> Requires `google-genai >= 1.55.0`. `base_environment` is an **object** (not a bare
+> string); `sources` mounts files at the paths the agent auto-discovers.
 
 ```python
 from google import genai
 client = genai.Client()
 
-# One-time: create the reusable custom agent
+# One-time: create the reusable custom agent, mounting AGENTS.md + seed skills.
 client.agents.create(
     id="lazarus",
     base_agent="antigravity-preview-05-2026",   # Gemini 3.5 Flash managed agent
-    system_instruction=open(".agents/AGENTS.md").read(),
-    base_environment="lazarus-env",              # persistent: GnuCOBOL + repo skeleton
+    system_instruction="You are LAZARUS... follow .agents/AGENTS.md.",
+    base_environment={
+        "type": "remote",
+        "sources": [
+            {"type": "inline", "target": ".agents/AGENTS.md", "content": "..."},
+            {"type": "inline", "target": ".agents/skills/comp-3/SKILL.md", "content": "..."},
+        ],
+    },
+    # tools omitted -> defaults to code_execution + google_search + url_context
 )
+
+# Run: first call provisions a fresh sandbox; capture the server-generated env id.
+itx = client.interactions.create(agent="lazarus", input=PROMPT, environment="remote", stream=True)
+# follow-up turns reuse files + forged skills:
+itx2 = client.interactions.create(agent="lazarus", input=NEXT,
+                                  environment=itx.environment_id,
+                                  previous_interaction_id=itx.id)
 ```
 
-- **State dimensions are independent:** `previous_interaction_id` carries chat history; `environment=<id>` carries the sandbox files. We keep the environment (so forged skills + the oracle binary persist) while threading the conversation.
+- **State dimensions are independent:** `previous_interaction_id` carries chat history; `environment=<env_id>` carries the sandbox files. We keep the environment (so forged skills + the oracle binary persist) while threading the conversation.
+- **Environment lifecycle:** `"remote"` provisions a fresh sandbox (~5s); reuse the returned `environment_id` to keep state. Sandboxes auto-snapshot after 15 min idle and are retained 7 days. 4 CPU / 16 GB (free during preview).
 - **Skills are config:** `.agents/AGENTS.md` (persona + loop policy) and `.agents/skills/<name>/SKILL.md` (auto-loaded idiom handlers). FORGE writes new ones at runtime.
 - **Observable steps:** every thought / tool call / code run streams via `interaction.steps` → rendered as the live "agent working" UI (this *is* the demo surface).
 

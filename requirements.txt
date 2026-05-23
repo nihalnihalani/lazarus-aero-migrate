@@ -1,4 +1,4 @@
-google-genai>=1.0.0
+google-genai>=1.55.0  # Interactions API / Managed Agents require >=1.55.0
 fastapi>=0.110.0
 uvicorn[standard]>=0.29.0
 sse-starlette>=2.0.0
