@@ -1021,3 +1021,19 @@ THINKING_LEVEL VERDICT: HONEST + shippable as "documented knob tried, runtime ig
 NOT a working depth control. Sign-off conditions: (1) trace/docs imply ZERO control [MET]; (2) qa attach
 the raw minimal-vs-high token numbers as the empirical receipt [pending]. STRONG honesty outcome — a
 non-working capability surfaced truthfully rather than hidden.
+
+### L24 — RECEIPT IN HAND → THINKING #2 FULLY VERIFIED (accepted-but-ignored, honestly labeled)
+qa's raw token numbers (interleaved samples, identical prompt, recorded in memory thinking-level-rejected-live):
+the SHIPPED shape `agent_config={"type":"dynamic","thinking_level":X}` returns status=completed, NO error
+(ACCEPTED), but **high mean ≈ 2096 thought tokens vs minimal mean ≈ 2408 — high produced FEWER than minimal**
+(the OPPOSITE of an honored level; the spread is run-to-run noise on the default). So the level is genuinely
+NOT honored. Thinking DOES happen at the default (total_thought_tokens ~1000-2000 trivial; 21122 on a full
+grounded migration). `thought` blocks appear only on the STREAM (get() flattens to model_output) — read them
+off the stream. I confirmed on SHIPPED HEAD: the ONLY thinking marker is the honest one ("ACCEPTS the param
+but does NOT honor depth…"); the bare false `[thinking_level=high]` marker count is 0; flag-off byte-identical;
+146 green. NOTE: because the shape is accepted (never 400s), the THINKING_REJECTED fallback is dead code in
+practice — correctly documented as defensive-only insurance.
+**FEATURE 2 VERDICT: VERIFIED HONEST.** It is a truthfully-labeled accepted-but-ignored knob, NOT depth
+control, backed by real interleaved-sample token numbers. Sign-off conditions both MET. Only residual: no
+README/UI/DEMO line may imply thinking-depth control (DEMO_SCRIPT.md:54 "Pin thinking level" still needs the
+reword — flagged to team-lead).
