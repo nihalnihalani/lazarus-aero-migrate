@@ -501,6 +501,26 @@ body {
 .stage.armed .dropzone { padding: .9rem 1rem; }
 .stage.armed .drop-glyph { font-size: 1.3rem; }
 
+/* ── live vs mock transport ───────────────────────────────────────── */
+/* Live = a real stream with no fixed length: hide timeline-only controls
+   (scrubber, speeds, skip-to-end). The agent.live dot signals real mode. */
+.mode-live .scrub,
+.mode-live .speeds,
+.mode-live #skip-btn { display: none; }
+.mode-live .clock {
+  color: var(--green); letter-spacing: .12em; text-transform: uppercase;
+  text-shadow: var(--glow-green);
+}
+.mode-live .panel-tab.live::after {
+  content: 'REAL'; margin-left: .5rem; font-size: .5rem; letter-spacing: .14em;
+  color: var(--green); border: 1px solid var(--green-dim); border-radius: 100px;
+  padding: .05rem .35rem; vertical-align: middle;
+}
+.mode-mock .meta-pill.iter::before {
+  content: 'FALLBACK'; color: var(--amber); margin-right: .5rem;
+  font-size: .56rem; letter-spacing: .1em;
+}
+
 /* ── responsive: stack on narrow ──────────────────────────────────── */
 @media (max-width: 1100px) {
   .stage { grid-template-columns: 1fr; overflow: auto; }

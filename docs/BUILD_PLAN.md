@@ -16,10 +16,10 @@ Hackathon clock: hacking starts **10:30 AM**, submissions due **5:00 PM** → ~6
 | Time | Milestone | Who |
 |---|---|---|
 | 10:30–11:00 | Lock scope + codename. "Hello world" Managed Agent: `interactions.create`, render one `interaction.step`. | B, A |
-| 11:00–11:30 | Provision sandbox; install + pin GnuCOBOL into `base_environment`; verify it persists. Pick golden COBOL module. | C |
+| 11:00–11:30 | **PRE-WARM:** agent installs **real GnuCOBOL via `micromamba`/conda-forge userland** (no root; network on) into ONE long-lived `environment_id` that's reused on stage (so the live run needs no network); verify `cobc --version` survives reconnect. Capture `golden_io.json` from a real `cobc` run as the deterministic fallback. Pick golden COBOL module. | C |
 | 11:30–13:00 | Core loop: ingest → translate → write Python → run COBOL oracle → gen tests → pytest. Get a real RED→GREEN once. | B |
 | 11:30–13:00 | UI in parallel: stream steps, render diff + terminal. | A |
-| 13:00–14:00 | **Lunch / keep building.** FORGE mechanism: detect unknown idiom → write `SKILL.md` → commit → reload → re-run. | B |
+| 13:00–14:00 | **Lunch / keep building.** FORGE mechanism: detect unknown idiom → write `SKILL.md` into the env → next pass reuses the same `environment_id` and re-reads `.agents/skills/` → re-run. (No mid-run hot-reload; re-discovery happens on the next pass.) | B |
 | 14:00–14:45 | Business-rule recovery panel (plain-English logic output). Wire git-diff animation for the forged skill. | A, B |
 | 14:45–15:15 | Integrate oracle + fallback `golden_io.json`. Lock the golden input battery. | C |
 | 15:15–16:00 | End-to-end dry run on the golden path. Fix the loop's non-determinism (cap iterations, pin seed). | All |
@@ -29,7 +29,7 @@ Hackathon clock: hacking starts **10:30 AM**, submissions due **5:00 PM** → ~6
 ## Definition of "done" for the demo path
 1. Drop golden COBOL → plain-English rules appear (<25s).
 2. Python written + COBOL oracle run + pytest RED (real failure).
-3. Agent forges a `SKILL.md` (visible git diff) → reload.
+3. Agent forges a `SKILL.md` (visible git diff) → next pass re-reads it from the reused env.
 4. pytest GREEN, byte-for-byte equivalence shown.
 5. Download the migrated module from the persistent sandbox.
 6. Fallback cache verified to look identical if the live call stalls.

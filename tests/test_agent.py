@@ -82,6 +82,18 @@ def make_stream(*, env_id, interaction_id, model_text, deltas=()):
     )
 
 
+def make_stream_steps_only(*, env_id, interaction_id, model_text):
+    """C11 hardening: terminal interaction object has NO `.steps` attr (only id +
+    environment_id). The model_output arrives via a streamed step.stop event, exactly
+    the §8 shape. migrate() must still recover the text from the stream itself."""
+    final = types.SimpleNamespace(id=interaction_id, environment_id=env_id)  # no .steps
+    yield types.SimpleNamespace(
+        event_type="step.stop",
+        step=FakeStep("model_output", model_text),
+    )
+    yield types.SimpleNamespace(event_type="interaction.completed", interaction=final)
+
+
 class FakeInteractions:
     def __init__(self, scripted):
         self._scripted = list(scripted)  # list of dicts describing each turn
@@ -90,6 +102,12 @@ class FakeInteractions:
     def create(self, **kwargs):
         self.calls.append(kwargs)
         spec = self._scripted[len(self.calls) - 1]
+        if spec.get("steps_only"):
+            return make_stream_steps_only(
+                env_id=spec["env_id"],
+                interaction_id=spec["interaction_id"],
+                model_text=spec["model_text"],
+            )
         return make_stream(
             env_id=spec["env_id"],
             interaction_id=spec["interaction_id"],
@@ -132,6 +150,31 @@ def test_base_agent_id_is_verified_string(agent_mod):
     assert agent_mod.BASE_AGENT == "antigravity-preview-05-2026"
 
 
+def test_no_sampling_params_sent_to_gemini_3x(agent_mod, tmp_path):
+    """Gemini 3.x BREAKING: temperature/top_p/top_k are rejected. migrate() must never
+    send them — directly or nested in extra_body/generation_config."""
+    cobol = tmp_path / "p.cob"
+    cobol.write_text("IDENTIFICATION DIVISION.\n")
+    client = FakeClient([
+        {"env_id": "env1", "interaction_id": "i1",
+         "model_text": "All tests pass. 3/3 equivalent to original COBOL."},
+    ])
+    agent_mod.migrate(client, str(cobol))
+
+    forbidden = {"temperature", "top_p", "top_k"}
+
+    def _scan(obj):
+        if isinstance(obj, dict):
+            assert not (forbidden & set(obj)), f"sampling param leaked: {forbidden & set(obj)}"
+            for v in obj.values():
+                _scan(v)
+
+    for call in client.interactions.calls:
+        assert forbidden.isdisjoint(call), f"sampling param in kwargs: {call.keys()}"
+        _scan(call.get("extra_body"))
+        _scan(call.get("generation_config"))
+
+
 # --------------------------------------------------------------------------
 # prompt building — initial + FORGE safe-reload retry
 # --------------------------------------------------------------------------
@@ -139,6 +182,15 @@ def test_build_prompt_includes_cobol_and_oracle_steps(agent_mod):
     prompt = agent_mod._build_prompt("IDENTIFICATION DIVISION.")
     assert "IDENTIFICATION DIVISION." in prompt
     assert "differential" in prompt.lower() or "oracle" in prompt.lower()
+
+
+def test_build_prompt_uses_golden_as_primary_not_apt(agent_mod):
+    """No-apt sandbox reality (devils-advocate): the prompt must make golden_io.json
+    the PRIMARY oracle ground truth and must NOT instruct an apt-get install of cobc."""
+    prompt = agent_mod._build_prompt("IDENTIFICATION DIVISION.")
+    low = prompt.lower()
+    assert "golden_io.json" in low
+    assert "apt-get" not in low and "apt install" not in low
 
 
 def test_forge_retry_prompt_instructs_explicit_reread(agent_mod):
@@ -214,6 +266,29 @@ def test_migrate_forges_then_retries_reusing_environment(agent_mod, tmp_path):
     assert result.id == "i2"
 
 
+def test_migrate_recovers_output_from_stream_when_terminal_has_no_steps(agent_mod, tmp_path):
+    """C11: don't depend on a guessed `interaction.steps` array on the terminal object.
+    If model_output arrives only via streamed step.stop events, migrate() must still
+    READ it — proven here by the forge->retry firing off output that exists ONLY in the
+    stream. If migrate ignored the streamed text, it would see no forge path and stop
+    after 1 turn; a 2nd turn proves the streamed output was recovered and parsed."""
+    cobol = tmp_path / "p.cob"
+    cobol.write_text("IDENTIFICATION DIVISION.\n")
+    client = FakeClient([
+        # turn 1: RED + forge — but the model_output is ONLY in the stream (no .steps)
+        {"env_id": "env1", "interaction_id": "i1", "steps_only": True,
+         "model_text": "FAILED unknown idiom. FORGED .agents/skills/comp-3/SKILL.md"},
+        # turn 2: GREEN
+        {"env_id": "env1", "interaction_id": "i2", "steps_only": True,
+         "model_text": "All tests pass. equivalent to original COBOL."},
+    ])
+    result = agent_mod.migrate(client, str(cobol))
+    assert len(client.interactions.calls) == 2   # forge detected from streamed text -> retry
+    assert client.interactions.calls[1]["extra_body"] == {"environment": "env1"}
+    assert ".agents/skills/" in client.interactions.calls[1]["input"]
+    assert result.id == "i2"
+
+
 def test_migrate_caps_iterations(agent_mod, tmp_path):
     cobol = tmp_path / "p.cob"
     cobol.write_text("IDENTIFICATION DIVISION.\n")
@@ -226,3 +301,41 @@ def test_migrate_caps_iterations(agent_mod, tmp_path):
     client = FakeClient(scripted)
     agent_mod.migrate(client, str(cobol))
     assert len(client.interactions.calls) == agent_mod.MAX_ITERATIONS
+
+
+# --------------------------------------------------------------------------
+# C10 — REAL iteration counter, enforced in code + surfaced to the UI
+# --------------------------------------------------------------------------
+def test_migrate_emits_iteration_counter_to_ui(agent_mod, tmp_path, monkeypatch):
+    """C10: the hard cap must be a real, observable counter — each turn reports
+    (current, MAX_ITERATIONS) to the UI so the frontend can render it on stage."""
+    seen = []
+    monkeypatch.setattr(agent_mod, "emit_iteration",
+                        lambda current, total: seen.append((current, total)))
+    cobol = tmp_path / "p.cob"
+    cobol.write_text("IDENTIFICATION DIVISION.\n")
+    client = FakeClient([
+        {"env_id": "env1", "interaction_id": "i1",
+         "model_text": "FAILED. FORGED .agents/skills/x/SKILL.md"},
+        {"env_id": "env1", "interaction_id": "i2",
+         "model_text": "All tests pass. equivalent to original COBOL."},
+    ])
+    agent_mod.migrate(client, str(cobol))
+    # one counter event per interaction turn, numbered from 1, total = MAX_ITERATIONS
+    assert seen == [(1, agent_mod.MAX_ITERATIONS), (2, agent_mod.MAX_ITERATIONS)]
+
+
+def test_migrate_counter_stops_at_max_when_never_green(agent_mod, tmp_path, monkeypatch):
+    """C10: the counter must hard-stop at MAX_ITERATIONS (no off-by-one over-run)."""
+    seen = []
+    monkeypatch.setattr(agent_mod, "emit_iteration",
+                        lambda current, total: seen.append(current))
+    cobol = tmp_path / "p.cob"
+    cobol.write_text("IDENTIFICATION DIVISION.\n")
+    scripted = [
+        {"env_id": "env1", "interaction_id": f"i{n}",
+         "model_text": "FAILED. FORGED .agents/skills/x/SKILL.md"}
+        for n in range(agent_mod.MAX_ITERATIONS + 3)
+    ]
+    agent_mod.migrate(FakeClient(scripted), str(cobol))
+    assert seen == list(range(1, agent_mod.MAX_ITERATIONS + 1))
