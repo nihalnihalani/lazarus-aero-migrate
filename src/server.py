@@ -44,6 +44,7 @@ from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 
 import agent as agent_mod  # src/ is on sys.path (uvicorn --app-dir src)
+import event_transform  # canonical-event derivations (pytest/oracle/business_rule)
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 WEB_DIR = ROOT / "web"
@@ -143,15 +144,34 @@ def _run_migration(run_id: str, cobol: str, filename: str) -> None:
         result = agent_mod.migrate(client, tmp_path)
 
         output = agent_mod.extract_output_text(result)
+
+        # Recovered business rules (archaeology panel) parsed from LAZARUS_RULE markers.
+        for rule in event_transform.business_rules_from_text(output):
+            push(rule)
+
+        # Oracle banner: real compiler + the input battery (from the golden capture).
+        golden = SAMPLE_DIR / "golden_io.json"
+        if golden.exists():
+            push(event_transform.oracle_event(str(golden)))
+
         skill = agent_mod._forged_skill_path(output)
         if skill:
             push({"type": "forge", "skill": skill,
                   "reason": "Unknown idiom: numeric DISPLAY format + ROUND-HALF-UP."})
             push({"type": "reload",
                   "label": f"Re-reading {skill} in the reused environment"})
-        passed = agent_mod._tests_passed(output)
-        push({"type": "pytest", "result": "green" if passed else "red",
-              "summary": output[-500:]})
+
+        # STRUCTURED pytest (the money shot): per-case COBOL-vs-Python from the agent's
+        # LAZARUS_ORACLE_JSON marker. Fall back to a coarse verdict if it's absent.
+        records = event_transform.parse_oracle_records(output)
+        if records:
+            pytest_ev = event_transform.to_pytest_event(records, iteration=1)
+            passed = pytest_ev["result"] == "green"
+            push(pytest_ev)
+        else:
+            passed = agent_mod._tests_passed(output)
+            push({"type": "pytest", "result": "green" if passed else "red",
+                  "summary": output[-500:], "cases": []})
 
         env_id = agent_mod.extract_environment_id(result)
         migrated = _download_migrated(env_id)

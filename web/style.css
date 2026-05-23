@@ -483,12 +483,9 @@ body {
 .stage.armed .dropzone { padding: .9rem 1rem; }
 .stage.armed .drop-glyph { font-size: 1.3rem; }
 
-/* ── live vs mock transport ───────────────────────────────────────── */
-/* Live = a real stream with no fixed length: hide timeline-only controls
-   (scrubber, speeds, skip-to-end). The agent.live dot signals real mode. */
-.mode-live .scrub,
-.mode-live .speeds,
-.mode-live #skip-btn { display: none; }
+/* ── live transport ───────────────────────────────────────────────── */
+/* Live is the only mode. The clock is a steady "LIVE" indicator (a real
+   stream has no fixed length, so there's no scrubber/speeds/skip). */
 .mode-live .clock {
   color: var(--green); letter-spacing: .12em; text-transform: uppercase;
   text-shadow: var(--glow-green);
@@ -498,10 +495,14 @@ body {
   color: var(--green); border: 1px solid var(--green-dim); border-radius: 100px;
   padding: .05rem .35rem; vertical-align: middle;
 }
-.mode-mock .meta-pill.iter::before {
-  content: 'FALLBACK'; color: var(--amber); margin-right: .5rem;
-  font-size: .56rem; letter-spacing: .1em;
-}
+
+/* ── backend error states (no fake data — make the real state legible) ── */
+.backend-down .status,
+.no-key .status { color: var(--red); text-shadow: var(--glow-red); }
+.backend-down .panel-tab.live::before,
+.no-key .panel-tab.live::before { color: var(--red); text-shadow: var(--glow-red); }
+.backend-down .panel-tab.live::after,
+.no-key .panel-tab.live::after { color: var(--red); border-color: var(--red-dim); }
 
 /* ── responsive: stack on narrow ──────────────────────────────────── */
 @media (max-width: 1100px) {

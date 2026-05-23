@@ -1,8 +1,12 @@
-// app.js — entry point. LIVE ONLY (task #9): the UI runs completely end-to-end
-// against the real FastAPI backend (src/server.py) → real Gemini Managed Agent.
-// There is NO scripted/mock playback. Drop a COBOL module → real SSE stream →
-// live-trace UI → real download. On any failure, a clear ERROR state — never
-// fake data, never a fallback animation.
+// app.js — entry point. LIVE BY DEFAULT (task #9): the UI runs completely
+// end-to-end against the real FastAPI backend (src/server.py) → real Gemini
+// Managed Agent. Drop a COBOL module → real SSE stream → live-trace UI → real
+// download. On any failure, a clear ERROR state — never fake data.
+//
+// BREAK-GLASS only: open with `?mock=1` to replay the cached scripted run
+// (mock/mock-run.json — derived from REAL GnuCOBOL golden output). This is the
+// Safety-operator fallback for the live demo (45% of score, beta API, day-of
+// key); it is OFF by default and never in the live path.
 
 import { Renderer } from './renderer.js';
 import { createLivePlayer, driveLiveRun, checkHealth } from './live.js';
@@ -16,6 +20,8 @@ const state = {
   cobol: null,       // loaded source
   filename: 'payroll.cob',
   loaded: false,
+  mock: new URLSearchParams(window.location.search).get('mock') === '1',
+  mockTimers: [],    // scheduled setTimeout ids for the break-glass replay
 };
 
 function bindPlayer(player) {
@@ -24,8 +30,36 @@ function bindPlayer(player) {
   // those bindings are intentionally omitted.
 }
 
+// BREAK-GLASS (?mock=1): replay the cached scripted run through a LivePlayer on
+// its own timeline. The Safety-operator fallback if the live demo stalls — NOT
+// the default. The cached COBOL outputs are real GnuCOBOL bytes (golden_io.json).
+async function startMock() {
+  state.mockTimers.forEach(clearTimeout);
+  state.mockTimers = [];
+  $('#meta-status').textContent = 'BREAK-GLASS · cached run (?mock=1)';
+  $('#meta-module').textContent = state.filename;
+  $('#meta-agent').textContent = 'antigravity-preview-05-2026';
+  $('#clock').textContent = 'cached';
+
+  state.player = createLivePlayer({ iteration_cap: 4, module: state.filename });
+  bindPlayer(state.player);
+  state.renderer.reset({ iteration_cap: 4, module: state.filename });
+  try {
+    const res = await fetch('./mock/mock-run.json', { cache: 'no-store' });
+    const run = await res.json();
+    for (const ev of (run.events || [])) {
+      state.mockTimers.push(setTimeout(() => state.player.push(ev), ev.t ?? 0));
+    }
+  } catch (err) {
+    state.player.push({ type: 'step', kind: 'status', status: 'error',
+      title: 'cached run unavailable',
+      text: `Could not load mock/mock-run.json: ${err.message} (serve over http).` });
+  }
+}
+
 async function startLive() {
   if (!state.cobol) return;
+  if (state.mock) return startMock();   // break-glass replay instead of the live call
   if (state.live) state.live.abort();
   $('#meta-status').textContent = 'connecting to agent…';
   $('#meta-module').textContent = state.filename;
@@ -111,11 +145,18 @@ function wireControls() {
 }
 
 async function main() {
-  document.body.classList.add('mode-live');
+  document.body.classList.add(state.mock ? 'mode-mock' : 'mode-live');
   wireDropzone();
   wireControls();
   state.renderer.reset({ iteration_cap: 4 });
-  $('#clock').textContent = 'live';
+  $('#clock').textContent = state.mock ? 'cached' : 'live';
+
+  // BREAK-GLASS mode skips the live backend probe — it replays the cached run.
+  if (state.mock) {
+    $('#meta-status').textContent =
+      'BREAK-GLASS (?mock=1) · drop a module or preload to replay the cached run';
+    return;
+  }
 
   // Probe the backend so the operator sees the real state before dropping a file.
   const h = await checkHealth();
