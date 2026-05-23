@@ -51,7 +51,7 @@
 - [ ] **Confirm live-progress surfacing:** during-run liveness = the WORKING-banner **elapsed timer** (ticks 1s, stops on done) + the agent trace + `✓ ok` breadcrumbs accruing. On a successful run the **phase rail completes the full pipeline in order** (ingest→recover→translate→oracle→test→forge→reload→done — the server emits these phases in fixed sequence from the ordered structured events, NEVER from prose: see server.py `_run_migration`; deterministic + unit-tested). Its beats light as those results land (toward the end), NOT beat-by-beat live — don't narrate it as a live march. (Earlier live captures predate this fix; a fresh rehearsal capture will show the in-order rail end-to-end.)
 - [ ] **Golden COBOL module** hand-picked: ~150 lines, one reproducible idiom (decimal/rounding) the model resolves in 1–2 iterations. Rehearse **10×** end-to-end (real timing).
 - [ ] **Hard-cap iterations at 4** with a visible counter.
-- [ ] **Pin** model + thinking level; disable silent auto-retries that can hang.
+- [ ] **Pin** the model; disable silent auto-retries that can hang. *(Thinking depth isn't pinnable — the managed-agent runtime accepts a `thinking_level` but doesn't honor it; reasoning runs at the default either way.)*
 - [ ] **Break-glass:** `?mock=1` replays the cached run (real GnuCOBOL golden bytes) — labeled "cached" in the UI; only cut to it if the API dies, and announce it.
 - [ ] **Backup video** of a clean full run recorded the morning of, in case the laptop dies — labeled "recording" if shown.
 
