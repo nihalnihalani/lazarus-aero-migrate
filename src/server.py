@@ -86,6 +86,12 @@ def _key_present() -> bool:
     return bool(os.environ.get("GEMINI_API_KEY"))
 
 
+# Whole-environment tarball downloads can be large + slow on the live Files API; qa's live
+# run showed the old hardcoded 30s timing out (the module WAS present, just slow to fetch),
+# which blanked the diff + download panels. Default generously; override via env if needed.
+_ENV_TARBALL_TIMEOUT = float(os.environ.get("LAZARUS_ENV_TARBALL_TIMEOUT", "180"))
+
+
 def _fetch_env_tarball(env_id: str) -> bytes:
     """Download the whole-environment tarball via the Files API (findings-agents.md §9,
     cookbook-verbatim URL). Requires GEMINI_API_KEY. Raises on any HTTP/network error."""
@@ -96,7 +102,7 @@ def _fetch_env_tarball(env_id: str) -> bytes:
         f"environment-{env_id}:download?alt=media"
     )
     req = urllib.request.Request(url, headers={"x-goog-api-key": key})
-    with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 (trusted host)
+    with urllib.request.urlopen(req, timeout=_ENV_TARBALL_TIMEOUT) as resp:  # noqa: S310
         return resp.read()
 
 
@@ -318,9 +324,20 @@ def _run_migration(run_id: str, cobol: str, filename: str) -> None:
             push({"type": "reload",
                   "label": f"Re-reading {skill} in the reused environment"})
 
-        # Fetch the agent's actual module (Files API) — drives the diff + the oracle pytest.
+        # Fetch the agent's actual module — drives the diff + the oracle pytest + download.
+        # PRIMARY: the Files-API whole-environment tarball (authoritative on-disk bytes).
+        # FALLBACK: if that fetch yields nothing (e.g. it timed out on the live API — qa saw
+        # this), recover the module from the fenced ```python block the agent echoes in its
+        # output, so a slow tarball never blanks the diff/download panels. Still the agent's
+        # REAL code, just sourced from its output rather than the disk image.
         env_id = agent_mod.extract_environment_id(result)
         migrated = _download_migrated(env_id)
+        module_source = "files_api"
+        if migrated is None:
+            scraped = event_transform.python_module_from_output(output)
+            if scraped is not None:
+                migrated = scraped
+                module_source = "model_output"
         run["download"] = migrated
 
         # COBOL<->Python diff from REAL sources (submitted COBOL + the agent's payroll.py).
@@ -353,7 +370,7 @@ def _run_migration(run_id: str, cobol: str, filename: str) -> None:
 
         if migrated is not None:
             push({"type": "download", "name": "payroll.py",
-                  "mime": "text/x-python", "content": migrated})
+                  "mime": "text/x-python", "content": migrated, "source": module_source})
         emit_phase("done")
         push({"type": "done",
               "verdict": "EQUIVALENT" if passed else "INCOMPLETE",

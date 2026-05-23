@@ -145,6 +145,31 @@ def phase_for_text(text: str) -> str | None:
     return None
 
 
+def python_module_from_output(text: str) -> str | None:
+    """Best-effort: recover the agent's payroll.py source from its model output.
+
+    A resilience fallback for when the whole-environment tarball fetch is slow/unavailable
+    (it can time out on the live Files API): the agent typically echoes the full module in a
+    fenced ```python block. Returns the LARGEST python-ish fenced block that looks like a
+    real module (has an import or def/print and >=5 lines), or None if none qualifies. This
+    is clearly the agent's REAL written code (echoed in its output), not invented — but the
+    Files-API tarball stays the PRIMARY source (authoritative on-disk bytes); this only kicks
+    in when that fetch yields nothing, so the diff/download panels aren't blocked by latency.
+    """
+    blocks = re.findall(r"```(?:python|py)?\s*\n(.*?)```", text, re.S)
+    best = None
+    for block in blocks:
+        body = block.strip("\n")
+        lines = body.splitlines()
+        looks_like_module = (
+            len(lines) >= 5
+            and re.search(r"^\s*(import |from .+ import |def |class |print\()", body, re.M)
+        )
+        if looks_like_module and (best is None or len(body) > len(best)):
+            best = body
+    return best
+
+
 def diff_event(cobol_src: str, python_src: str, *,
                cobol_name: str = "payroll.cob", python_name: str = "payroll.py") -> dict:
     """Build the canonical `diff` event: original COBOL (left) vs the agent's Python (right).
