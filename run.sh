@@ -8,6 +8,13 @@
 # One server (FastAPI/uvicorn) serves BOTH the web UI (at /) and the API
 # (/api/*). The LIVE migration needs GEMINI_API_KEY; without it the UI still
 # loads and  ?mock=1  replays the cached run (real GnuCOBOL golden bytes).
+#
+# Opt-in agent capabilities (DEFAULT OFF — the verified path is byte-identical
+# when unset):
+#   LAZARUS_GROUND=1       web-grounding (google_search / url_context)
+#   LAZARUS_THINKING=high  request a thinking_level (accepted; no depth control)
+# Multi-module migration (CLI, not the web UI):
+#   .venv/bin/python -m agent --input a.cob b.cob
 # ============================================================================
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -45,6 +52,15 @@ if command -v cobc >/dev/null 2>&1; then
 else
   echo "ℹ GnuCOBOL (cobc) not found — the oracle uses the committed golden_io.json (fine)."
 fi
+# opt-in agent capabilities (default off; byte-identical when unset)
+flags=()
+[ -n "${LAZARUS_GROUND:-}" ]   && flags+=("LAZARUS_GROUND=${LAZARUS_GROUND}")
+[ -n "${LAZARUS_THINKING:-}" ] && flags+=("LAZARUS_THINKING=${LAZARUS_THINKING}")
+if [ "${#flags[@]}" -gt 0 ]; then
+  echo "✓ opt-in capabilities: ${flags[*]}"
+else
+  echo "ℹ opt-in capabilities OFF — set LAZARUS_GROUND=1 / LAZARUS_THINKING=high to enable."
+fi
 
 # ── 3. start the server ─────────────────────────────────────────────────────
 echo
@@ -64,6 +80,7 @@ bold "  LAZARUS is live →  ${URL}"
 echo "  • drop a COBOL module, or click 'use the sample — payroll.cob'"
 echo "  • no key?  ${URL}/index.html?mock=1   (22s cached replay)"
 echo "  • a real live run is ~8–9 min (real sandbox + compiler + proof)"
+echo "  • multi-module (CLI):  ${PY} -m agent --input a.cob b.cob"
 echo "  • run the tests:  ${PY} -m pytest -q"
 echo "────────────────────────────────────────────────────────────"
 { command -v open >/dev/null 2>&1 && open "$URL"; } \

@@ -91,6 +91,18 @@ LAZARUS is a **single autonomous agent** (no fragile multi-agent orchestration) 
 | **Business-rule recovery** | Reframes "code translator" (seen 100×) into "institutional-knowledge archaeology" (never seen). |
 | **Single-agent honesty** | Only documented Managed Agents features: code execution + file persistence. No unsupported sub-agent/MCP claims. |
 
+### "Why not just paste the COBOL into Gemini and ask for Python?"
+
+Because that gives you Python you have to **trust**; LAZARUS gives you Python you can **verify**.
+
+- **Proof, not vibes.** Paste-and-prompt has no oracle — the model grades its own homework. LAZARUS diffs the output against the *original COBOL's real GnuCOBOL bytes*; a wrong port is provably RED. (Classic trap: COBOL `ROUND-HALF-UP` vs Python's banker's `round()` — a naive port is wrong on every half-cent, compiles fine, and miscalculates real money. The oracle catches it; a casual review doesn't.)
+- **Recovers the *why*.** It surfaces the undocumented business rules in plain English, tied to source lines — not just transliterated syntax.
+- **Self-heals.** On an unknown idiom the model silently guesses; LAZARUS sees RED, forges a `SKILL.md`, and retries until it passes.
+- **Runs, doesn't describe.** Real sandbox, generated equivalence tests, `pytest` — *executed* Python, not a plausible-looking blob.
+- **Whole-codebase.** Cross-module rules (`PAYMAIN`→`TAXSUB`) are invisible from any single file; LAZARUS reads modules together.
+
+For a tiny, well-known snippet, paste-and-prompt is fine. LAZARUS's value scales with **stakes, undocumented-ness, idiom obscurity, and size** — exactly the systems worth migrating, where "looks right" isn't good enough.
+
 ### Experimental: opt-in agent capabilities
 
 Four further Managed-Agents capabilities are implemented **behind default-OFF flags** — the verified single-module path above is **byte-identical** when they're off (regression-tested). Each is scoped honestly:
@@ -98,11 +110,11 @@ Four further Managed-Agents capabilities are implemented **behind default-OFF fl
 | Capability | How to enable | Status |
 |---|---|---|
 | **Web-grounding** — consult `google_search` / `url_context` on an unfamiliar idiom before translating | `LAZARUS_GROUND=1` | **Live-verified** (pinned SDK 2.6.0): a real grounded migration ran 3 `google_search_call`s, forged a skill, and the oracle went GREEN. Grounding is an *opportunistic* consult (the agent often verifies by compiling too). |
-| **Cross-run skill library** — bank a forged `SKILL.md` to disk and re-mount it on the next run so skills accumulate | re-register on change (off by default) | **Discovery live-verified** (pinned SDK 2.6.0): a mounted `SKILL.md` is auto-discovered on a genuinely fresh interaction (sentinel token). The forge→bank→re-discover cycle is unit-tested and strongly indicated live (a real run narrated forging + reading back the skill); the banked-file-on-disk live assertion is a follow-up (#9). |
+| **Cross-run skill library** — bank a forged `SKILL.md` to disk and re-mount it on the next run so skills accumulate | re-register on change (off by default) | **Live-verified end-to-end** (pinned SDK 2.6.0): discovery (a mounted `SKILL.md` found on a genuinely fresh interaction, sentinel token) **and** banking (a real forge wrote `sign-trailing-separate/SKILL.md` to disk via the shipped path). |
 | **Whole-codebase ingestion** — recover cross-module rules from several files at once | `python -m agent --input a.cob b.cob …` (CLI/API) | **Live-verified** (pinned SDK 2.6.0): a rule recoverable only by reading two files together (`PAYMAIN`→`TAXSUB`). **Not** oracle-byte-verified (the golden is single-module); the web demo stays single-file. |
 | **Configurable thinking depth** — `thinking_level` | `LAZARUS_THINKING=…` | **No depth control.** The runtime accepts the param (no error), but its effect on reasoning depth is **not demonstrable** — thought-token counts are too noisy to prove it's honored or ignored. Kept only as an honest, graceful no-op. |
 
-> These ship default-off and **experimental**, covered by the network-free unit/static suite and the devil's-advocate honesty audit ([`docs/research/CHALLENGES-v2.md`](docs/research/CHALLENGES-v2.md), L16–L31). Three are live-verified on the pinned SDK as noted; `thinking_level` is an honest no-op. Raw live-evidence artifacts are still being banked into the repo for full reproducibility.
+> These ship default-off and **experimental**, covered by the network-free unit/static suite and the devil's-advocate honesty audit ([`docs/research/CHALLENGES-v2.md`](docs/research/CHALLENGES-v2.md), L16–L31). Three are live-verified on the pinned SDK; `thinking_level` is an honest no-op. The raw, version-stamped live evidence (search blocks, banked `SKILL.md`, cross-module rule) is banked in [`docs/EVIDENCE.md`](docs/EVIDENCE.md).
 
 ## 3. Tech Stack
 

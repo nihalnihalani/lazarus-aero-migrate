@@ -897,6 +897,34 @@ def test_bank_forged_skill_writes_body_to_redirected_dir(agent_mod, tmp_path, mo
     assert str(tmp_path) in str(written)
 
 
+def test_bank_forged_skill_skips_lazarus_module_python_block(agent_mod, tmp_path, monkeypatch):
+    """REGRESSION (qa live bug, DA-verified): a real migrate() RED output prints the
+    LAZARUS_MODULE ```python block AFTER the skill path, BEFORE (or around) the SKILL.md.
+    The old "first fenced block after the path" logic banked payroll.py AS the skill (then
+    mounted the migrated module as idiom guidance on a fresh run). Banking must SKIP the
+    python module and bank the actual SKILL.md (YAML/markdown) instead."""
+    agents_dir = _make_agents_tree(tmp_path, {})
+    _point_agents_dir(agent_mod, monkeypatch, agents_dir)
+
+    skill_path = ".agents/skills/sign-overpunch/SKILL.md"
+    output = (
+        "I forged " + skill_path + " to handle this.\n"
+        # the migrated module prints FIRST after the path (the exact bug shape):
+        "LAZARUS_MODULE:\n```python\n#!/usr/bin/env python3\nfrom decimal import Decimal\n"
+        "def process(x): return Decimal(x)\n```\n"
+        "And the skill I wrote:\n"
+        "```markdown\n---\nname: sign-overpunch\n---\n# Sign Overpunch\n"
+        "Last digit encodes the sign.\n```\n"
+    )
+    written = agent_mod._bank_forged_skill_from_output(skill_path, output)
+    assert written is not None, "should bank the SKILL.md, not nothing"
+    body = written.read_text()
+    # banked the SKILL.md (YAML frontmatter), NOT the python module:
+    assert "name: sign-overpunch" in body
+    assert "#!/usr/bin/env" not in body and "from decimal" not in body, \
+        "must NOT bank the LAZARUS_MODULE python block as the skill"
+
+
 def test_bank_forged_skill_no_body_is_noop(agent_mod, tmp_path, monkeypatch):
     """No fenced body after the path => banking returns None and writes nothing (we never
     invent skill content). This is WHY the forge-loop tests with body-less model_text don't
