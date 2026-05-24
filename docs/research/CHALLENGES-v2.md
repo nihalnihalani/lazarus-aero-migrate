@@ -1465,3 +1465,29 @@ or regression issue. Merge 6504a78 is fully signed off. DEVIL'S-ADVOCATE REVIEW 
 - **Pending (non-gating, qa offered):** a single continuous bank-in-A → fresh-B-discovers chain (the L19
   methodological gap — proven as two halves so far). Belt-and-suspenders; sign-off does not wait on it. (d) banking
   on the migrate() path is already covered by L33's fix+test.
+
+## L19 GAP CLOSED — CROSS-RUN chain proven in ONE continuous run (qa, version-stamped). #3 maximally grounded.
+The last methodological gap I'd noted (L19/L27: discovery + banking proven as two SEPARATE halves, not one
+continuous chain) is now closed. qa ran bank-in-A → re-register → SEPARATE-fresh-B-discovers in ONE
+version-stamped run (g.__version__=2.6.0):
+- RUN A forged + banked .../skills/qwxj-crossrun-idiom/SKILL.md (121 bytes, YAML frontmatter, NOT python — also
+  re-confirms the L33 banking-bug fix: banks the markdown body, not the LAZARUS_MODULE python block).
+- RE-REGISTER: fingerprint changed=True; banked skill present in the new base_environment mounts.
+- RUN B (a SEPARATE FRESH interaction on the re-registered agent) emitted the sentinel QWXJ-CROSSRUN-5582 + "qwxj"
+  — tokens that exist ONLY in the skill RUN A banked. A skill surviving in the SAME reused env CANNOT explain a
+  fresh agent emitting them (fresh interaction, new mount). So this is genuine cross-run accumulation end-to-end,
+  not the same-env FORGE-retry beat.
+This is the strongest #3 proof and it directly addresses every condition I set (echo→bank→re-register→fresh-run
+discovery, all in one chain, version-stamped). Saved to docs/EVIDENCE.md. #3 cross-run skill library: VERIFIED
+END-TO-END, maximally grounded. (Sign-off already stood on the two-halves proof + L33 fix/test; this is the
+belt-and-suspenders upgrade I asked for.)
+
+## ===== FINAL STATE (all 4 features + all #9 receipts SEEN, version-stamped on .venv/2.6.0) =====
+#1 grounding: VERIFIED (two grounded runs, 3 and 2 google_search_call stream blocks on a hard idiom; L32:
+grounding_tool_count unusable/None, use stream blocks). #2 thinking: ACCEPTED (HTTP 200) + depth INCONCLUSIVE,
+no control claimed (L28/L31, wording softened in code+README). #3 cross-run: VERIFIED END-TO-END (continuous
+chain above; L33 banking bug fixed + regression-tested). #4 multi-module: cross-module rule VERIFIED
+(PAYMAIN→TAXSUB), honest "not oracle-byte-verified" caveat shipped, CLI entry. function_call (L26): internal FS
+ops, §3 holds. Regression byte-identical to pre-feature main; oracle/falsifiability core untouched; suite 155
+green. Findings L16-L33. DEVIL'S-ADVOCATE REVIEW COMPLETE — sign-off granted, now maximally grounded; no open
+honesty/feasibility/regression issue.
