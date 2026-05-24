@@ -106,6 +106,29 @@ shipped `_bank_forged_skill_from_output` → `_persist_forged_skill` and lands a
 `SKILL.md` on disk. The mounted-skill fingerprint (`_mounted_skill_fingerprint`) changes
 when a skill is added/edited, triggering agent re-registration on the next run.
 
+**CONTINUOUS chain (bank-in-A → re-register → SEPARATE fresh-B discovers it) — the strongest
+cross-run receipt, in one run:**
+
+```
+import google.genai as g; g.__version__ = 2.6.0
+RUN A (forge + bank):
+  banked: <temp>/skills/qwxj-crossrun-idiom/SKILL.md
+  banked file: bytes=121, has_sentinel=True, starts_with_frontmatter=True, NOT-python=True
+RE-REGISTER:
+  fingerprint changed: True
+  banked skill in base_environment mounts: True
+RUN B (FRESH interaction, re-registered agent):
+  mentions sentinel QWXJ-CROSSRUN-5582: True
+  mentions qwxj: True
+VERDICT: CROSS-RUN VERIFIED (forge→bank→re-register→fresh-run discovery)
+```
+
+Run B is a SEPARATE fresh interaction that emits the sentinel `QWXJ-CROSSRUN-5582` — a token
+that exists ONLY in the skill Run A banked. A skill surviving in the same reused environment
+cannot explain this (fresh agent, new mount). This also confirms the banking-bug fix
+(`34910c2`): the banked body is real markdown (`NOT-python=True`), not the `LAZARUS_MODULE`
+python block that a pre-fix `migrate()` run mis-banked.
+
 ---
 
 ## 4 · Whole-codebase / multi-module — VERIFIED (recovery only)
