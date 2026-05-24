@@ -1443,3 +1443,25 @@ main (L31 "silently ignored") was caught and corrected; no capability is claimed
 core "verdict tracks the oracle, not the agent" guarantee survives all four. The .venv/2.6.0-vs-system/1.73.1
 provenance discipline (L29) held throughout and resolved every conflicting finding. **No open honesty, feasibility,
 or regression issue. Merge 6504a78 is fully signed off. DEVIL'S-ADVOCATE REVIEW COMPLETE.**
+
+## L33 — POST-SIGN-OFF: qa-found BANKING BUG (migrate() mis-banks the LAZARUS_MODULE python block as the SKILL.md) — VERIFIED FIXED + I added the missing regression guard
+- **The bug (qa, filed to integration-eng):** on a REAL migrate() RED iteration the agent prints the
+  LAZARUS_MODULE ```python block AFTER the skill path. The OLD _bank_forged_skill_from_output banked the FIRST
+  fenced block after the path → it banked payroll.py (the migrated module) AS the SKILL.md, which would then be
+  mounted as "idiom guidance" on a fresh run. Real, shipped-path bug; the forge-specific (c) receipt didn't surface
+  it because that probe echoed only the skill block.
+- **FIX (already in committed HEAD):** _bank_forged_skill_from_output now iterates ALL fenced blocks and banks the
+  first that passes _looks_like_skill_md — which HARD-REJECTS python/cobol/json langs + code-ish prefixes
+  (#!/usr/bin/env, import, from, def, class) and ACCEPTS YAML-frontmatter / markdown. I DROVE the exact bug shape
+  (python block first, then the real ---/name: SKILL.md): banking correctly SKIPS the module and banks the skill
+  (verified: banked body has the frontmatter, no python). Fix is robust.
+- **GAP I caught + closed:** the fix had NO dedicated regression test — the 3 existing bank tests cover
+  happy-path / no-body / no-repo-pollution, none fed a python block. I ADDED
+  test_bank_forged_skill_skips_lazarus_module_python_block (committed 5f29d49): feeds the python-block-first shape,
+  asserts the module is NOT banked and the SKILL.md IS. 155 green. The bug can no longer silently regress.
+- **Impact on sign-off:** NONE adverse — the fix predated my sign-off and is correct; this only HARDENS #3
+  (banking solid AND now guarded). Good catch by qa; exactly the kind of real-path bug a forge-specific receipt
+  misses. #3 cross-run remains VERIFIED, now with a regression guard.
+- **Pending (non-gating, qa offered):** a single continuous bank-in-A → fresh-B-discovers chain (the L19
+  methodological gap — proven as two halves so far). Belt-and-suspenders; sign-off does not wait on it. (d) banking
+  on the migrate() path is already covered by L33's fix+test.
