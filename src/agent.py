@@ -648,9 +648,43 @@ def _forged_skill_path(output_text: str) -> str | None:
     return m.group(1) if m else None
 
 
-# A forged skill's body, if the agent echoed it in a fenced block right after announcing the
-# path (so we can BANK it locally). Tolerant: matches ```...``` (any/no language tag).
-_SKILL_BODY_RE = re.compile(r"```[a-zA-Z]*\n(.*?)```", re.S)
+# Fenced blocks in the agent's output, captured WITH their language tag so we can tell a
+# SKILL.md (markdown / YAML-frontmatter) apart from the migrated module (```python). Yields
+# (lang, body) for each ```<lang>\n...``` block.
+_FENCED_BLOCK_RE = re.compile(r"```([a-zA-Z0-9_+-]*)\n(.*?)```", re.S)
+
+
+def _looks_like_skill_md(lang: str, body: str) -> bool:
+    """True if a fenced block is plausibly a SKILL.md body, NOT the migrated module.
+
+    The forge contract (AGENTS.md) is: SKILL.md = YAML frontmatter `---\\nname:\\n---` +
+    markdown. So a real skill body starts with a `---` frontmatter fence. The migrated module
+    (LAZARUS_MODULE) is a ```python block starting with `#!/usr/bin/env python` / import /
+    from / def — which a real migrate() run prints AFTER the skill path, and which the old
+    "first fenced block after the path" logic wrongly banked as the skill (qa live bug).
+    """
+    lang = (lang or "").strip().lower()
+    text = (body or "").lstrip()
+    if not text:
+        return False
+    # Hard reject anything that's obviously source code / the migrated module — this is the
+    # qa live bug: the LAZARUS_MODULE ```python block printed after the skill path.
+    if lang in {"python", "py", "cobol", "cob", "json"}:
+        return False
+    if text.startswith(("#!/usr/bin/env", "#!/usr/bin", "import ", "from ", "def ", "class ")):
+        return False
+    # An EXPLICIT markdown/yaml fence is a positive signal on its own (the forge prompt asks
+    # the agent to write the SKILL.md as markdown) — trust the tag.
+    if lang in {"markdown", "md", "yaml", "yml"}:
+        return True
+    # YAML frontmatter is the documented SKILL.md shape, regardless of (or absent) a tag.
+    if text.startswith("---"):                 # ---\nname: ...
+        return True
+    # Untagged block: accept only if it reads like skill markdown (a heading or a name: key),
+    # never a bare code-ish body.
+    if lang == "" and ("name:" in text or text.startswith("#")):
+        return True
+    return False
 
 
 def _persist_forged_skill(name: str, content: str) -> pathlib.Path | None:
@@ -678,15 +712,23 @@ def _bank_forged_skill_from_output(skill_path: str, output_text: str) -> pathlib
     """If the agent echoed the forged SKILL.md body in `output_text`, bank it locally.
 
     `skill_path` is the announced path (…/skills/<name>/SKILL.md); we derive <name> from it
-    and pull the skill body from the first fenced block following the path mention. No body
-    found -> None (we never invent skill content). Best-effort; cross-run banking is a bonus.
+    and look in the text AFTER the path mention for the FIRST fenced block that actually looks
+    like a SKILL.md (YAML frontmatter / markdown — see _looks_like_skill_md), SKIPPING the
+    migrated ```python module block.
+
+    LIVE BUG FIX (qa): the old logic banked the FIRST fenced block after the path, but a real
+    migrate() run prints the LAZARUS_MODULE python block after the skill path, so payroll.py
+    got banked as the SKILL.md (then mounted as idiom guidance on a fresh run). We now require
+    the block to match the documented skill shape, never the module. No qualifying block ->
+    None (we never invent skill content, and never bank the module). Best-effort bonus.
     """
     name = pathlib.PurePosixPath(skill_path).parent.name
-    tail = output_text[output_text.find(skill_path) + len(skill_path):]
-    m = _SKILL_BODY_RE.search(tail)
-    if not m:
-        return None
-    return _persist_forged_skill(name, m.group(1).rstrip("\n") + "\n")
+    idx = output_text.find(skill_path)
+    tail = output_text[idx + len(skill_path):] if idx != -1 else output_text
+    for lang, body in (m.groups() for m in _FENCED_BLOCK_RE.finditer(tail)):
+        if _looks_like_skill_md(lang, body):
+            return _persist_forged_skill(name, body.rstrip("\n") + "\n")
+    return None
 
 
 def _looks_like_thinking_rejection(exc: Exception) -> bool:
