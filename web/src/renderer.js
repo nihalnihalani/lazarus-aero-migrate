@@ -217,6 +217,11 @@ export class Renderer {
     for (const card of r.flow.querySelectorAll('.card')) {
       card.classList.remove('has-data', 'in', 'active', 'pulse-green', 'pulse-red', 'forging', 'reloaded');
     }
+    // ...except the forge/skill panel: keep it always visible with its idle state
+    // ("no skill forged yet…", set above) so the skill library never looks like it
+    // vanished before the agent forges. on_forge() still populates + flashes it.
+    const forgeCard = r.flow.querySelector('.card[data-when="forge"]');
+    if (forgeCard) forgeCard.classList.add('has-data', 'in');
     if (r.flowIdle) {
       r.flowIdle.classList.remove('gone', 'is-error');
       r.flowIdle.innerHTML =

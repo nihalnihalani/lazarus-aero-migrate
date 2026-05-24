@@ -13,6 +13,8 @@
 # when unset):
 #   LAZARUS_GROUND=1       web-grounding (google_search / url_context)
 #   LAZARUS_THINKING=high  request a thinking_level (accepted; no depth control)
+#   LAZARUS_BANK_SKILLS=1  bank forged skills to the repo for cross-run reuse
+#                          (off by default → a live run never writes to .agents/skills)
 # Multi-module migration (CLI, not the web UI):
 #   .venv/bin/python -m agent --input a.cob b.cob
 # ============================================================================
@@ -54,12 +56,13 @@ else
 fi
 # opt-in agent capabilities (default off; byte-identical when unset)
 flags=()
-[ -n "${LAZARUS_GROUND:-}" ]   && flags+=("LAZARUS_GROUND=${LAZARUS_GROUND}")
-[ -n "${LAZARUS_THINKING:-}" ] && flags+=("LAZARUS_THINKING=${LAZARUS_THINKING}")
+[ -n "${LAZARUS_GROUND:-}" ]      && flags+=("LAZARUS_GROUND=${LAZARUS_GROUND}")
+[ -n "${LAZARUS_THINKING:-}" ]    && flags+=("LAZARUS_THINKING=${LAZARUS_THINKING}")
+[ -n "${LAZARUS_BANK_SKILLS:-}" ] && flags+=("LAZARUS_BANK_SKILLS=${LAZARUS_BANK_SKILLS}")
 if [ "${#flags[@]}" -gt 0 ]; then
   echo "✓ opt-in capabilities: ${flags[*]}"
 else
-  echo "ℹ opt-in capabilities OFF — set LAZARUS_GROUND=1 / LAZARUS_THINKING=high to enable."
+  echo "ℹ opt-in capabilities OFF — LAZARUS_GROUND=1 / LAZARUS_THINKING=high / LAZARUS_BANK_SKILLS=1 to enable."
 fi
 
 # ── 3. start the server ─────────────────────────────────────────────────────

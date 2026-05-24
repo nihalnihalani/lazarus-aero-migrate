@@ -86,6 +86,19 @@ def _grounding_enabled() -> bool:
     return os.environ.get("LAZARUS_GROUND", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _banking_enabled() -> bool:
+    """True when cross-run skill banking (Feature 3) is opted in via LAZARUS_BANK_SKILLS.
+
+    DEFAULT OFF: a live migration NEVER writes a forged SKILL.md into this repo's
+    .agents/skills/ unless this is set (1/true/yes/on). When off, FORGE still works
+    in-session (the agent writes the skill into its sandbox via code execution); we just
+    don't persist a durable copy into the repo. Opt in to accumulate skills across runs
+    (the next fresh invocation then mounts the banked skill + re-registers on the changed
+    fingerprint). Keeping it off keeps a live run side-effect-free on the working tree.
+    """
+    return os.environ.get("LAZARUS_BANK_SKILLS", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 _THINKING_LEVELS = {"minimal", "low", "high"}   # "medium" is the runtime default (no-op)
 
 
@@ -1020,11 +1033,13 @@ def migrate(client: genai.Client, cobol_path=None, *, cobol_paths=None):
         if not _pending_skill_path:
             # Failed but no new skill was forged -> nothing new to re-read; stop early.
             break
-        # CROSS-RUN banking (Feature 3): if the agent echoed the forged SKILL.md body, write
-        # it into this repo's .agents/skills/ so a FUTURE fresh invocation inherits it (via
-        # ensure_agent mounting it + the changed fingerprint re-registering the agent). The
-        # SAME-environment re-read below is unchanged; banking is an ADDITIONAL durable copy.
-        _bank_forged_skill_from_output(_pending_skill_path, output)
+        # CROSS-RUN banking (Feature 3) — OPT-IN via LAZARUS_BANK_SKILLS (default OFF). When
+        # enabled and the agent echoed the forged SKILL.md body, write it into this repo's
+        # .agents/skills/ so a FUTURE fresh invocation inherits it (via ensure_agent mounting
+        # it + the changed fingerprint re-registering the agent). Default off keeps a live run
+        # from ever touching the working tree; the SAME-environment re-read below is unchanged.
+        if _banking_enabled():
+            _bank_forged_skill_from_output(_pending_skill_path, output)
 
     return interaction
 

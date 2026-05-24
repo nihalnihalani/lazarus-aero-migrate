@@ -75,7 +75,7 @@ def _clear_capability_env(monkeypatch):
     Clearing them here means the regression baseline is honest even on a dev box that
     happens to export them, and feature tests set only the one flag they exercise.
     """
-    for var in ("LAZARUS_GROUND", "LAZARUS_THINKING"):
+    for var in ("LAZARUS_GROUND", "LAZARUS_THINKING", "LAZARUS_BANK_SKILLS"):
         monkeypatch.delenv(var, raising=False)
 
 
@@ -936,13 +936,7 @@ def test_bank_forged_skill_no_body_is_noop(agent_mod, tmp_path, monkeypatch):
     assert not (agents_dir / "skills" / "x").exists()
 
 
-def test_migrate_forge_loop_does_not_pollute_real_repo(agent_mod, tmp_path, monkeypatch):
-    """Defense-in-depth: a full forge->retry migrate() whose RED output carries BOTH a skill
-    path AND a fenced body must bank into the redirected AGENTS_DIR, never the real .agents/.
-    Guards against a future test/edit accidentally writing skills into the repo."""
-    agents_dir = _make_agents_tree(tmp_path, {})
-    _point_agents_dir(agent_mod, monkeypatch, agents_dir)
-
+def _forge_loop_client(agents_dir, tmp_path):
     cobol = _write_cobol(tmp_path, body="IDENTIFICATION DIVISION.\n")
     red = ("FAILED unknown idiom. FORGED .agents/skills/banked-idiom/SKILL.md\n"
            "```markdown\nbanked body\n```")
@@ -950,9 +944,31 @@ def test_migrate_forge_loop_does_not_pollute_real_repo(agent_mod, tmp_path, monk
         {"env_id": "env1", "interaction_id": "i1", "model_text": red},
         {"env_id": "env1", "interaction_id": "i2", "model_text": GREEN},
     ])
+    return client, cobol
+
+
+def test_migrate_forge_loop_banks_only_when_opted_in(agent_mod, tmp_path, monkeypatch):
+    """Banking is OPT-IN (LAZARUS_BANK_SKILLS, default off). With it ON, a full forge->retry
+    migrate() whose RED output carries BOTH a skill path AND a fenced body banks into the
+    redirected AGENTS_DIR — never the real .agents/ (defense-in-depth against repo pollution)."""
+    agents_dir = _make_agents_tree(tmp_path, {})
+    _point_agents_dir(agent_mod, monkeypatch, agents_dir)
+    monkeypatch.setenv("LAZARUS_BANK_SKILLS", "1")
+    client, cobol = _forge_loop_client(agents_dir, tmp_path)
     agent_mod.migrate(client, str(cobol))
     # banked into the temp dir, NOT the real repo
     assert (agents_dir / "skills" / "banked-idiom" / "SKILL.md").read_text().strip() == "banked body"
+
+
+def test_migrate_forge_loop_does_not_bank_by_default(agent_mod, tmp_path, monkeypatch):
+    """Default OFF: a live migrate() forge loop writes NOTHING to .agents/skills/ — a live run
+    is side-effect-free on the working tree unless banking is explicitly opted in."""
+    agents_dir = _make_agents_tree(tmp_path, {})
+    _point_agents_dir(agent_mod, monkeypatch, agents_dir)
+    # LAZARUS_BANK_SKILLS is cleared by the autouse fixture -> banking off
+    client, cobol = _forge_loop_client(agents_dir, tmp_path)
+    agent_mod.migrate(client, str(cobol))
+    assert not (agents_dir / "skills" / "banked-idiom").exists(), "must NOT bank when opted out"
 
 
 # ==========================================================================
